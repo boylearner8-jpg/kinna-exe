@@ -1,0 +1,18 @@
+export const KINNA_NOTIFICATION_MESSAGES: string[] = [
+  "Teri madhur dono ki gand fad dunga",
+  "Meri MKC",
+  "Meri gan marlo",
+  "Mai chutiya hu",
+  "Alarm clock baj raha hai par main nahi uthunga 😴",
+  "Jantar Mantar pe 500ft Titan form activate kar diya hai 😈",
+  "Papa Ayush ne dekh liya... Emergency Block protocol active 🚫🏻‍♂️",
+  "CJP paper leak cartel walon ki mkc 🔥",
+  "Motu Madhur mere Aryan ghode ko leke chala gaya 🏇",
+  "Advocate Bo highway pe crown pehen ke flex kar raha hai 👑⚖️",
+  "Dainik Janvani news waale monkey meme bana rahe hain mere pe 📰🐒",
+  "Army Aryan ne saare bacho ko rescue kar liya h 🪖",
+  "Heart Hacker Aryan ne mera dil chura liya 🫀",
+  "Pandit Bilal bhai smiling face se sign pakad ke baitha hai 📜✨",
+  "Chai peene chaloge mere saath? ☕",
+  "Homework kal karunga, aaj Time Pass level MAX hai 🎮",
+];

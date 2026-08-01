@@ -1,0 +1,350 @@
+import { supabase } from './supabase';
+
+// ══════════════════════════════════════════════
+// TYPES
+// ══════════════════════════════════════════════
+
+export interface GalleryMemory {
+  id: string;
+  image: string;        // public URL (Supabase Storage) or /path for seeds
+  memoryText: string;
+  date?: string;
+  tag?: string;
+  isPublic?: boolean;
+  created_at?: string;
+}
+
+export interface JourneyComment {
+  id: string;
+  name: string;
+  comment: string;
+  date: string;
+  time: string;
+  created_at: string;
+}
+
+export interface GuestbookMessage {
+  id: string;
+  name: string;
+  message: string;
+  date: string;
+  time: string;
+  created_at: string;
+}
+
+// ══════════════════════════════════════════════
+// GALLERY MEMORIES
+// ══════════════════════════════════════════════
+
+export async function fetchGalleryMemories(): Promise<GalleryMemory[]> {
+  const { data, error } = await supabase
+    .from('gallery_memories')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching gallery memories:', error.message);
+    return [];
+  }
+
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    image: row.image_url,
+    memoryText: row.memory_text,
+    date: row.date ?? undefined,
+    tag: row.tag ?? undefined,
+    isPublic: row.is_public ?? false,
+    created_at: row.created_at,
+  }));
+}
+
+export async function insertGalleryMemory(
+  memory: Omit<GalleryMemory, 'created_at'>,
+  imageFile?: File
+): Promise<GalleryMemory | null> {
+  let imageUrl = memory.image;
+
+  // Upload file to Supabase Storage if a file object was provided
+  if (imageFile) {
+    const fileName = `${memory.id}-${imageFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('gallery')
+      .upload(fileName, imageFile, { upsert: true });
+
+    if (uploadError) {
+      console.error('Storage upload error:', uploadError.message);
+      // Fall back to base64 data URL if storage fails
+      imageUrl = memory.image;
+    } else {
+      const { data: urlData } = supabase.storage
+        .from('gallery')
+        .getPublicUrl(uploadData.path);
+      imageUrl = urlData.publicUrl;
+    }
+  }
+
+  const { data, error } = await supabase
+    .from('gallery_memories')
+    .insert({
+      id: memory.id,
+      image_url: imageUrl,
+      memory_text: memory.memoryText,
+      date: memory.date ?? null,
+      tag: memory.tag ?? null,
+      is_public: memory.isPublic ?? false,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error inserting gallery memory:', error.message);
+    return null;
+  }
+
+  return {
+    id: data.id,
+    image: data.image_url,
+    memoryText: data.memory_text,
+    date: data.date ?? undefined,
+    tag: data.tag ?? undefined,
+    isPublic: data.is_public ?? false,
+    created_at: data.created_at,
+  };
+}
+
+export async function deleteGalleryMemory(id: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('gallery_memories')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error deleting gallery memory:', error.message);
+    return false;
+  }
+  return true;
+}
+
+// ══════════════════════════════════════════════
+// JOURNEY COMMENTS
+// ══════════════════════════════════════════════
+
+export async function fetchJourneyComments(): Promise<JourneyComment[]> {
+  const { data, error } = await supabase
+    .from('journey_comments')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching journey comments:', error.message);
+    return [];
+  }
+
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    name: row.name,
+    comment: row.comment,
+    date: row.date,
+    time: row.time,
+    created_at: row.created_at,
+  }));
+}
+
+export async function insertJourneyComment(
+  comment: Omit<JourneyComment, 'created_at'>
+): Promise<JourneyComment | null> {
+  const { data, error } = await supabase
+    .from('journey_comments')
+    .insert({
+      id: comment.id,
+      name: comment.name,
+      comment: comment.comment,
+      date: comment.date,
+      time: comment.time,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error inserting journey comment:', error.message);
+    return null;
+  }
+
+  return {
+    id: data.id,
+    name: data.name,
+    comment: data.comment,
+    date: data.date,
+    time: data.time,
+    created_at: data.created_at,
+  };
+}
+
+export async function deleteJourneyComment(id: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('journey_comments')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error deleting journey comment:', error.message);
+    return false;
+  }
+  return true;
+}
+
+// ══════════════════════════════════════════════
+// GUESTBOOK MESSAGES
+// ══════════════════════════════════════════════
+
+export async function fetchGuestbookMessages(): Promise<GuestbookMessage[]> {
+  const { data, error } = await supabase
+    .from('guestbook_messages')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching guestbook messages:', error.message);
+    return [];
+  }
+
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    name: row.name,
+    message: row.message,
+    date: row.date,
+    time: row.time,
+    created_at: row.created_at,
+  }));
+}
+
+export async function insertGuestbookMessage(
+  msg: Omit<GuestbookMessage, 'created_at'>
+): Promise<GuestbookMessage | null> {
+  const { data, error } = await supabase
+    .from('guestbook_messages')
+    .insert({
+      id: msg.id,
+      name: msg.name,
+      message: msg.message,
+      date: msg.date,
+      time: msg.time,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error inserting guestbook message:', error.message);
+    return null;
+  }
+
+  return {
+    id: data.id,
+    name: data.name,
+    message: data.message,
+    date: data.date,
+    time: data.time,
+    created_at: data.created_at,
+  };
+}
+
+export async function deleteGuestbookMessage(id: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('guestbook_messages')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error deleting guestbook message:', error.message);
+    return false;
+  }
+  return true;
+}
+
+// ══════════════════════════════════════════════
+// SEED DATA: Upsert hardcoded entries if table is empty
+// ══════════════════════════════════════════════
+
+export async function seedTableIfEmpty(
+  tableName: 'gallery_memories' | 'journey_comments' | 'guestbook_messages',
+  seedData: any[]
+): Promise<void> {
+  const { count } = await supabase
+    .from(tableName)
+    .select('id', { count: 'exact', head: true });
+
+  if ((count ?? 0) === 0) {
+    const { error } = await supabase.from(tableName).insert(seedData);
+    if (error) {
+      console.warn(`Seed failed for ${tableName}:`, error.message);
+    }
+  }
+}
+
+// ══════════════════════════════════════════════
+// ONE-TIME MIGRATION: localStorage → Supabase
+// ══════════════════════════════════════════════
+
+const MIGRATION_FLAG = 'kinna_supabase_migrated_v1';
+
+export async function migrateLocalStorageToSupabase(): Promise<void> {
+  if (localStorage.getItem(MIGRATION_FLAG)) return;
+
+  try {
+    // Migrate gallery user memories (non-seed items)
+    const galleryRaw = localStorage.getItem('kinna_gallery_memories_v2');
+    if (galleryRaw) {
+      const items = JSON.parse(galleryRaw) as any[];
+      const userItems = items.filter((m) => m.isPublic === true);
+      for (const m of userItems) {
+        await supabase.from('gallery_memories').upsert({
+          id: m.id,
+          image_url: m.image,
+          memory_text: m.memoryText,
+          date: m.date ?? null,
+          tag: m.tag ?? null,
+          is_public: true,
+        });
+      }
+    }
+
+    // Migrate journey comments (non-seed items)
+    const commentsRaw = localStorage.getItem('kinna_journey_comments_v1');
+    if (commentsRaw) {
+      const items = JSON.parse(commentsRaw) as any[];
+      const userItems = items.filter((c) => c.id.startsWith('jcom-') && c.id !== 'jcom-1' && c.id !== 'jcom-2');
+      for (const c of userItems) {
+        await supabase.from('journey_comments').upsert({
+          id: c.id,
+          name: c.name,
+          comment: c.comment,
+          date: c.date,
+          time: c.time,
+          created_at: c.created_at,
+        });
+      }
+    }
+
+    // Migrate guestbook messages (non-seed items)
+    const messagesRaw = localStorage.getItem('kinna_guestbook_messages_v2');
+    if (messagesRaw) {
+      const items = JSON.parse(messagesRaw) as any[];
+      const userItems = items.filter((m) => !m.id.startsWith('msg-seed-'));
+      for (const m of userItems) {
+        await supabase.from('guestbook_messages').upsert({
+          id: m.id,
+          name: m.name,
+          message: m.message,
+          date: m.date,
+          time: m.time,
+          created_at: m.created_at,
+        });
+      }
+    }
+
+    localStorage.setItem(MIGRATION_FLAG, '1');
+    console.log('✅ localStorage migration to Supabase complete.');
+  } catch (err) {
+    console.error('Migration error:', err);
+  }
+}

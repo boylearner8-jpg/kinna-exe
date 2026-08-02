@@ -51,13 +51,14 @@ export function Hero({ onEnter }: HeroProps) {
           <span className="badge">🔐 FILE #KNA-2006</span>
         </motion.div>
 
-        {/* Profile image */}
+        {/* Profile image with floating glowing aura */}
         <motion.div
           initial={{ scale: 0, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ type: 'spring', stiffness: 200, damping: 20, delay: 0.4 }}
           className="relative flex justify-center mb-10"
         >
+          <div className="absolute inset-0 rounded-full bg-yellow-500/20 blur-3xl animate-pulse pointer-events-none" />
           <ProfileImage />
         </motion.div>
 
@@ -68,21 +69,20 @@ export function Hero({ onEnter }: HeroProps) {
           transition={{ delay: 0.7 }}
         >
           <h1
-            className="font-display font-black text-6xl md:text-8xl lg:text-9xl mb-3"
+            className="font-display font-black text-5xl sm:text-7xl md:text-8xl lg:text-9xl mb-3 tracking-tight"
             style={{
-              background: 'linear-gradient(135deg, #FFD700, #FFA500, #FFED4A)',
+              background: 'linear-gradient(135deg, #FFF59D 0%, #FFD700 35%, #FFA500 70%, #FF6D00 100%)',
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
               backgroundClip: 'text',
-              textShadow: 'none',
-              filter: 'drop-shadow(0 0 30px rgba(255,215,0,0.6))',
+              filter: 'drop-shadow(0 0 45px rgba(255,215,0,0.65))',
             }}
           >
             KINNA.EXE
           </h1>
           <p
-            className="font-mono-custom text-sm md:text-base tracking-[0.4em] uppercase mb-2"
-            style={{ color: 'rgba(255,215,0,0.7)' }}
+            className="font-mono-custom text-xs sm:text-sm md:text-base tracking-[0.3em] uppercase mb-2 font-bold"
+            style={{ color: 'rgba(255,215,0,0.85)' }}
           >
             Government Classified Specimen
           </p>
@@ -243,6 +243,7 @@ function ProfileImage() {
         <img
           src="/kinna.jpg"
           alt="Kinna - Government Classified Specimen"
+          decoding="async"
           className="w-full h-full object-cover object-top"
           style={{ filter: 'contrast(1.1) saturate(1.2)' }}
         />

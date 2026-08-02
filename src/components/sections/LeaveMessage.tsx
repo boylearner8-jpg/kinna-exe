@@ -6,13 +6,15 @@ import {
   fetchGuestbookMessages,
   insertGuestbookMessage,
   deleteGuestbookMessage,
+  insertGuestbookReply,
+  deleteGuestbookReply,
 } from '../../lib/db';
+import type { GuestbookReply } from '../../lib/db';
+import { broadcastNewComment } from '../../lib/realtime';
 import {
   FiMessageSquare,
   FiUser,
   FiSend,
-  FiClock,
-  FiCalendar,
   FiCheckCircle,
   FiAlertCircle,
   FiLoader,
@@ -20,6 +22,7 @@ import {
   FiTrash2,
   FiLock,
   FiX,
+  FiMessageCircle,
 } from 'react-icons/fi';
 
 export interface GuestbookMessage {
@@ -29,6 +32,7 @@ export interface GuestbookMessage {
   date: string;
   time: string;
   created_at: string;
+  replies?: GuestbookReply[];
 }
 
 const INITIAL_MESSAGES: GuestbookMessage[] = [
@@ -61,6 +65,32 @@ const INITIAL_MESSAGES: GuestbookMessage[] = [
 const ADMIN_PASSWORD = 'minaramchutiya';
 const STORAGE_KEY = 'kinna_guestbook_messages_v2';
 
+function formatTimeAgo(isoString?: string): string {
+  if (!isoString) return 'just now';
+  const now = Date.now();
+  const past = new Date(isoString).getTime();
+  if (isNaN(past)) return 'just now';
+
+  const diffSec = Math.max(0, Math.floor((now - past) / 1000));
+
+  if (diffSec < 10) return 'just now';
+  if (diffSec < 60) return `${diffSec}s ago`;
+
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+
+  const diffDays = Math.floor(diffHr / 24);
+  if (diffDays < 30) return `${diffDays}d ago`;
+
+  const diffMonths = Math.floor(diffDays / 30);
+  if (diffMonths < 12) return `${diffMonths}mo ago`;
+
+  return `${Math.floor(diffMonths / 12)}y ago`;
+}
+
 export function LeaveMessage() {
   const { ref } = useScrollReveal(0.1);
   const { playClick, playSuccess, playNotification } = useSound();
@@ -89,9 +119,20 @@ export function LeaveMessage() {
 
   // Password Delete Modal state
   const [deletingMessage, setDeletingMessage] = useState<GuestbookMessage | null>(null);
+  const [deletingReply, setDeletingReply] = useState<GuestbookReply | null>(null);
   const [inputPassword, setInputPassword] = useState('');
   const [passwordError, setPasswordError] = useState(false);
   const [deleteSuccess, setDeleteSuccess] = useState(false);
+
+  // Inline Reply Form States
+  const [replyingToMessageId, setReplyingToMessageId] = useState<string | null>(null);
+  const [replyName, setReplyName] = useState('');
+  const [replyText, setReplyText] = useState('');
+  const [isSubmittingReply, setIsSubmittingReply] = useState(false);
+  const [replyValidationError, setReplyValidationError] = useState<string | null>(null);
+
+  // Toggle exact timestamp display
+  const [expandedTimeId, setExpandedTimeId] = useState<string | null>(null);
 
   // Load from Supabase on mount
   useEffect(() => {
@@ -218,6 +259,115 @@ export function LeaveMessage() {
     }
   };
 
+  // Submit Guestbook Reply
+  const handleReplySubmit = async (e: FormEvent, messageId: string, parentAuthorName: string) => {
+    e.preventDefault();
+    playClick();
+    setReplyValidationError(null);
+
+    const trimmedName = replyName.trim();
+    const trimmedReply = replyText.trim();
+
+    if (!trimmedName) {
+      setReplyValidationError('Please enter your name.');
+      return;
+    }
+
+    if (!trimmedReply) {
+      setReplyValidationError('Please write a reply.');
+      return;
+    }
+
+    setIsSubmittingReply(true);
+
+    const now = new Date();
+    const formattedDate = now.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+    });
+    const formattedTime = now.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+
+    const newReply: GuestbookReply = {
+      id: `mrep-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      message_id: messageId,
+      name: trimmedName,
+      reply: trimmedReply,
+      date: formattedDate,
+      time: formattedTime,
+      created_at: now.toISOString(),
+    };
+
+    // Save reply to Supabase
+    insertGuestbookReply(newReply).catch((err) =>
+      console.error('Supabase guestbook reply insert failed:', err)
+    );
+
+    // Broadcast realtime alert
+    broadcastNewComment(trimmedName, `replied to ${parentAuthorName}'s message: "${trimmedReply}"`);
+
+    playSuccess();
+
+    // Optimistically update local message state with new reply
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id === messageId) {
+          return {
+            ...m,
+            replies: [...(m.replies || []), newReply],
+          };
+        }
+        return m;
+      })
+    );
+
+    setIsSubmittingReply(false);
+    setReplyName('');
+    setReplyText('');
+    setReplyingToMessageId(null);
+  };
+
+  // Trigger Delete Reply Prompt
+  const handlePromptDeleteReply = (rep: GuestbookReply) => {
+    playNotification();
+    setDeletingReply(rep);
+    setInputPassword('');
+    setPasswordError(false);
+    setDeleteSuccess(false);
+  };
+
+  // Confirm Delete Reply Password
+  const handleConfirmDeleteReply = async (e: FormEvent) => {
+    e.preventDefault();
+    if (inputPassword === ADMIN_PASSWORD) {
+      playSuccess();
+      setPasswordError(false);
+      setDeleteSuccess(true);
+      const id = deletingReply?.id;
+      if (id) {
+        deleteGuestbookReply(id).catch((err) =>
+          console.error('Supabase reply delete failed:', err)
+        );
+      }
+      setTimeout(() => {
+        setMessages((prev) =>
+          prev.map((m) => ({
+            ...m,
+            replies: (m.replies || []).filter((r) => r.id !== id),
+          }))
+        );
+        setDeletingReply(null);
+        setDeleteSuccess(false);
+      }, 1000);
+    } else {
+      setPasswordError(true);
+    }
+  };
+
   return (
     <section id="message" className="relative py-24 px-4 overflow-hidden grid-bg">
       {/* Background Glow */}
@@ -299,47 +449,190 @@ export function LeaveMessage() {
                     transition={{ duration: 0.3 }}
                     className="glass-card-hover rounded-2xl p-5 border border-yellow-500/20 bg-black/80 shadow-[0_0_15px_rgba(255,215,0,0.05)] hover:shadow-[0_0_25px_rgba(255,215,0,0.2)] hover:border-yellow-400 transition-all duration-300 group relative"
                   >
-                    {/* Top Row: Name & Timestamps & Delete */}
-                    <div className="flex items-start justify-between gap-4 mb-3 flex-wrap">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-full bg-yellow-500/20 border border-yellow-400/50 flex items-center justify-center text-yellow-400 font-display font-black text-sm group-hover:scale-110 transition-transform">
+                    {/* Top Row: Name & Relative Time & Delete */}
+                    <div className="flex items-start justify-between gap-4 mb-2 flex-wrap">
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        <div className="w-8 h-8 rounded-full bg-yellow-500/20 border border-yellow-400/50 flex items-center justify-center text-yellow-400 font-display font-black text-sm group-hover:scale-110 transition-transform flex-shrink-0">
                           👤
                         </div>
                         <div className="font-display font-bold text-base text-yellow-400 group-hover:text-yellow-300 transition-colors">
                           {item.name}
                         </div>
-                      </div>
 
-                      <div className="flex items-center gap-3">
-                        {/* Timestamps */}
-                        <div className="flex items-center gap-2 font-mono-custom text-xs text-yellow-500/70">
-                          <div className="flex items-center gap-1 bg-yellow-500/10 px-2 py-0.5 rounded border border-yellow-500/20">
-                            <FiCalendar className="w-3 h-3 text-yellow-400" />
-                            <span>{item.date}</span>
-                          </div>
-                          <div className="flex items-center gap-1 bg-yellow-500/10 px-2 py-0.5 rounded border border-yellow-500/20">
-                            <FiClock className="w-3 h-3 text-yellow-400" />
-                            <span>{item.time}</span>
-                          </div>
-                        </div>
-
-                        {/* Delete Button (Password Protected) */}
+                        {/* Compact relative timestamp next to user name (Clickable for exact Date & Time) */}
                         <button
-                          onClick={() => handlePromptDelete(item)}
-                          title="Delete message (Requires Password)"
-                          className="w-7 h-7 rounded-lg bg-red-950/80 border border-red-500/40 text-red-400 hover:bg-red-600 hover:text-white flex items-center justify-center transition-all"
+                          onClick={() => setExpandedTimeId(expandedTimeId === item.id ? null : item.id)}
+                          className="font-mono-custom text-xs text-yellow-500/60 hover:text-yellow-300 transition-colors flex items-center gap-1.5 cursor-pointer"
+                          title="Click to view exact date and time"
                         >
-                          <FiTrash2 className="w-3.5 h-3.5" />
+                          <span className="text-yellow-500/30">•</span>
+                          <span>{formatTimeAgo(item.created_at)}</span>
+                          {expandedTimeId === item.id && (
+                            <span className="text-[10px] text-yellow-400 font-mono-custom font-bold bg-yellow-500/10 px-2 py-0.5 rounded border border-yellow-500/30 ml-1">
+                              ({item.date} at {item.time})
+                            </span>
+                          )}
                         </button>
                       </div>
+
+                      {/* Delete Button (Password Protected) */}
+                      <button
+                        onClick={() => handlePromptDelete(item)}
+                        title="Delete message (Requires Password)"
+                        className="w-7 h-7 rounded-lg bg-red-950/80 border border-red-500/40 text-red-400 hover:bg-red-600 hover:text-white flex items-center justify-center transition-all flex-shrink-0"
+                      >
+                        <FiTrash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
 
-                    {/* Message Text */}
-                    <div className="pl-10">
+                    {/* Message Text Body */}
+                    <div className="pl-10 mb-3">
                       <p className="font-sans text-sm sm:text-base text-yellow-100/90 leading-relaxed font-normal whitespace-pre-wrap">
-                        💬 "{item.message}"
+                        {item.message}
                       </p>
                     </div>
+
+                    {/* ─── REPLY SECTION DIRECTLY UNDER MESSAGE BODY ─── */}
+                    <div className="pl-10 mb-2">
+                      <button
+                        onClick={() => {
+                          playClick();
+                          setReplyingToMessageId(replyingToMessageId === item.id ? null : item.id);
+                          setReplyValidationError(null);
+                        }}
+                        className={`px-3 py-1 rounded-lg border text-xs font-mono-custom inline-flex items-center gap-1.5 transition-all ${
+                          replyingToMessageId === item.id
+                            ? 'bg-yellow-500 text-black border-yellow-400 font-bold shadow-[0_0_10px_#FFD700]'
+                            : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/20'
+                        }`}
+                      >
+                        <FiMessageCircle className="w-3.5 h-3.5" />
+                        <span>Reply {item.replies && item.replies.length > 0 ? `(${item.replies.length})` : ''}</span>
+                      </button>
+                    </div>
+
+                    {/* ─── INLINE REPLY FORM ─── */}
+                    <AnimatePresence>
+                      {replyingToMessageId === item.id && (
+                        <motion.form
+                          initial={{ opacity: 0, height: 0, marginTop: 0 }}
+                          animate={{ opacity: 1, height: 'auto', marginTop: 12 }}
+                          exit={{ opacity: 0, height: 0, marginTop: 0 }}
+                          onSubmit={(e) => handleReplySubmit(e, item.id, item.name)}
+                          className="ml-4 sm:ml-10 p-4 rounded-xl border border-yellow-500/30 bg-black/90 space-y-3 relative mb-3"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-mono-custom text-[11px] text-yellow-400 font-bold tracking-wider uppercase flex items-center gap-1">
+                              <span>↩ Replying to</span>
+                              <span className="text-yellow-300 font-bold">{item.name}</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setReplyingToMessageId(null)}
+                              className="text-yellow-500/50 hover:text-yellow-400 text-xs"
+                            >
+                              <FiX className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          {replyValidationError && (
+                            <div className="flex items-center gap-1.5 text-red-400 font-mono-custom text-xs">
+                              <FiAlertCircle className="w-3.5 h-3.5" />
+                              <span>{replyValidationError}</span>
+                            </div>
+                          )}
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <div>
+                              <input
+                                type="text"
+                                value={replyName}
+                                onChange={(e) => setReplyName(e.target.value)}
+                                placeholder="Your Name *"
+                                className="w-full bg-black/60 border border-yellow-500/30 rounded-lg p-2.5 text-xs text-yellow-100 font-mono-custom outline-none focus:border-yellow-400"
+                              />
+                            </div>
+                            <div className="sm:col-span-2">
+                              <input
+                                type="text"
+                                value={replyText}
+                                onChange={(e) => setReplyText(e.target.value)}
+                                placeholder={`Write your reply to ${item.name}... *`}
+                                className="w-full bg-black/60 border border-yellow-500/30 rounded-lg p-2.5 text-xs text-yellow-100 font-sans outline-none focus:border-yellow-400"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setReplyingToMessageId(null)}
+                              className="px-3 py-1.5 rounded-lg border border-yellow-500/20 text-yellow-500/60 font-mono-custom text-xs hover:text-yellow-400"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={isSubmittingReply}
+                              className="btn-gold px-4 py-1.5 rounded-lg font-display font-bold text-xs flex items-center gap-1.5 shadow-[0_0_15px_rgba(255,215,0,0.2)] disabled:opacity-50"
+                            >
+                              {isSubmittingReply ? (
+                                <FiLoader className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <FiSend className="w-3.5 h-3.5" />
+                              )}
+                              <span>POST REPLY</span>
+                            </button>
+                          </div>
+                        </motion.form>
+                      )}
+                    </AnimatePresence>
+
+                    {/* ─── NESTED REPLIES LIST UNDER MESSAGE ─── */}
+                    {item.replies && item.replies.length > 0 && (
+                      <div className="mt-3 ml-4 sm:ml-10 space-y-2 border-l-2 border-yellow-500/20 pl-3">
+                        {item.replies.map((r) => (
+                          <div
+                            key={r.id}
+                            className="rounded-xl p-3 border border-yellow-500/15 bg-yellow-500/5 hover:border-yellow-500/30 transition-all group/rep"
+                          >
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[10px] text-yellow-400">↳</span>
+                                <span className="font-display font-bold text-xs text-yellow-300">
+                                  {r.name}
+                                </span>
+                                {/* Compact relative timestamp for reply */}
+                                <button
+                                  onClick={() => setExpandedTimeId(expandedTimeId === r.id ? null : r.id)}
+                                  className="font-mono-custom text-[11px] text-yellow-500/60 hover:text-yellow-300 cursor-pointer"
+                                  title="Click to view exact date and time"
+                                >
+                                  • {formatTimeAgo(r.created_at)}
+                                  {expandedTimeId === r.id && (
+                                    <span className="text-[10px] text-yellow-400 font-mono-custom font-bold bg-yellow-500/10 px-1.5 py-0.5 rounded border border-yellow-500/30 ml-1">
+                                      ({r.date} at {r.time})
+                                    </span>
+                                  )}
+                                </button>
+                              </div>
+
+                              <button
+                                onClick={() => handlePromptDeleteReply(r)}
+                                title="Delete reply"
+                                className="opacity-60 group-hover/rep:opacity-100 text-red-400 hover:text-red-300 p-0.5"
+                              >
+                                <FiTrash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+
+                            <p className="font-sans text-xs text-yellow-100/80 pl-4 leading-relaxed">
+                              {r.reply}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </motion.div>
                 ))}
               </AnimatePresence>
@@ -560,6 +853,80 @@ export function LeaveMessage() {
                       className="w-full py-3.5 rounded-xl bg-red-600 border border-red-400 text-white font-display font-black text-xs tracking-widest hover:bg-red-500 transition-all shadow-[0_0_20px_rgba(255,0,64,0.4)]"
                     >
                       🗑️ CONFIRM DELETE
+                    </button>
+                  </form>
+                )}
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* ═══ Password-Protected Delete Reply Modal ═══ */}
+        <AnimatePresence>
+          {deletingReply && (
+            <div className="fixed inset-0 z-[99999] bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="relative w-full max-w-md glass-card rounded-3xl border-2 border-red-500/60 p-6 bg-black/95 shadow-[0_0_50px_rgba(255,0,64,0.3)]"
+              >
+                <button
+                  onClick={() => setDeletingReply(null)}
+                  className="absolute top-4 right-4 w-8 h-8 rounded-full bg-red-500/20 border border-red-500/40 text-red-400 flex items-center justify-center hover:bg-red-600 hover:text-white transition-colors"
+                >
+                  <FiX className="w-4 h-4" />
+                </button>
+
+                <div className="text-center mb-6">
+                  <div className="w-12 h-12 mx-auto rounded-full bg-red-500/20 border border-red-500/50 flex items-center justify-center text-red-500 mb-3 text-xl shadow-[0_0_15px_rgba(255,0,64,0.4)]">
+                    <FiLock />
+                  </div>
+                  <h3 className="font-display font-black text-lg text-red-400 mb-1">
+                    ADMIN PASSWORD REQUIRED
+                  </h3>
+                  <p className="font-mono-custom text-xs text-yellow-500/60">
+                    Enter security password to delete this reply by {deletingReply.name}
+                  </p>
+                </div>
+
+                {deleteSuccess ? (
+                  <div className="py-4 text-center space-y-2">
+                    <FiCheckCircle className="w-10 h-10 text-green-400 mx-auto" />
+                    <div className="font-display font-bold text-base text-green-400">
+                      REPLY DELETED!
+                    </div>
+                  </div>
+                ) : (
+                  <form onSubmit={handleConfirmDeleteReply} className="space-y-4">
+                    <div>
+                      <label className="block font-mono-custom text-xs text-red-400 font-bold mb-2">
+                        ENTER PASSWORD
+                      </label>
+                      <input
+                        type="password"
+                        value={inputPassword}
+                        onChange={(e) => {
+                          setInputPassword(e.target.value);
+                          setPasswordError(false);
+                        }}
+                        placeholder="••••••••••••"
+                        required
+                        className="w-full bg-black/80 border-2 border-red-500/40 rounded-xl p-3 text-center text-base text-yellow-300 font-mono-custom outline-none focus:border-red-400 tracking-widest"
+                      />
+                      {passwordError && (
+                        <div className="mt-2 text-red-500 font-mono-custom text-xs flex items-center justify-center gap-1.5 font-bold">
+                          <FiAlertCircle className="w-4 h-4" />
+                          <span>INVALID PASSWORD! ACCESS DENIED.</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="w-full py-3.5 rounded-xl bg-red-600 border border-red-400 text-white font-display font-black text-xs tracking-widest hover:bg-red-500 transition-all shadow-[0_0_20px_rgba(255,0,64,0.4)]"
+                    >
+                      🗑️ CONFIRM DELETE REPLY
                     </button>
                   </form>
                 )}

@@ -6,8 +6,12 @@ import {
   fetchJourneyComments,
   insertJourneyComment,
   deleteJourneyComment,
+  insertJourneyReply,
+  deleteJourneyReply,
   migrateLocalStorageToSupabase,
 } from '../../lib/db';
+import type { JourneyReply } from '../../lib/db';
+import { broadcastNewComment } from '../../lib/realtime';
 import { KINNA_JOURNEY } from '../../data/content';
 import {
   FiCompass,
@@ -20,7 +24,6 @@ import {
   FiMessageCircle,
   FiUser,
   FiSend,
-  FiCalendar,
   FiTrash2,
   FiCheckCircle,
   FiAlertCircle,
@@ -37,6 +40,7 @@ export interface JourneyComment {
   date: string;
   time: string;
   created_at: string;
+  replies?: JourneyReply[];
 }
 
 const INITIAL_JOURNEY_COMMENTS: JourneyComment[] = [
@@ -60,6 +64,31 @@ const INITIAL_JOURNEY_COMMENTS: JourneyComment[] = [
 
 const ADMIN_PASSWORD = 'minaramchutiya';
 const STORAGE_KEY = 'kinna_journey_comments_v1';
+function formatTimeAgo(isoString?: string): string {
+  if (!isoString) return 'just now';
+  const now = Date.now();
+  const past = new Date(isoString).getTime();
+  if (isNaN(past)) return 'just now';
+
+  const diffSec = Math.max(0, Math.floor((now - past) / 1000));
+
+  if (diffSec < 10) return 'just now';
+  if (diffSec < 60) return `${diffSec}s ago`;
+
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+
+  const diffDays = Math.floor(diffHr / 24);
+  if (diffDays < 30) return `${diffDays}d ago`;
+
+  const diffMonths = Math.floor(diffDays / 30);
+  if (diffMonths < 12) return `${diffMonths}mo ago`;
+
+  return `${Math.floor(diffMonths / 12)}y ago`;
+}
 
 export function KinnaJourney() {
   const { ref } = useScrollReveal(0.1);
@@ -93,9 +122,20 @@ export function KinnaJourney() {
 
   // Delete Modal States
   const [deletingComment, setDeletingComment] = useState<JourneyComment | null>(null);
+  const [deletingReply, setDeletingReply] = useState<JourneyReply | null>(null);
   const [inputPassword, setInputPassword] = useState('');
   const [passwordError, setPasswordError] = useState(false);
   const [deleteSuccess, setDeleteSuccess] = useState(false);
+
+  // Inline Reply Form States
+  const [replyingToCommentId, setReplyingToCommentId] = useState<string | null>(null);
+  const [replyName, setReplyName] = useState('');
+  const [replyText, setReplyText] = useState('');
+  const [isSubmittingReply, setIsSubmittingReply] = useState(false);
+  const [replyValidationError, setReplyValidationError] = useState<string | null>(null);
+
+  // Toggle exact timestamp display for comments/replies
+  const [expandedTimeId, setExpandedTimeId] = useState<string | null>(null);
 
   // Load from Supabase on mount + run one-time migration
   useEffect(() => {
@@ -175,6 +215,9 @@ export function KinnaJourney() {
       console.error('Supabase insert failed:', err)
     );
 
+    // Broadcast realtime toast notification to all active visitors
+    broadcastNewComment(trimmedName);
+
     playSuccess();
     setComments((prev) => [newComment, ...prev]);
     setIsSubmitting(false);
@@ -217,6 +260,115 @@ export function KinnaJourney() {
       setTimeout(() => {
         setComments((prev) => prev.filter((c) => c.id !== id));
         setDeletingComment(null);
+        setDeleteSuccess(false);
+      }, 1000);
+    } else {
+      setPasswordError(true);
+    }
+  };
+
+  // Submit Inline Reply
+  const handleReplySubmit = async (e: FormEvent, commentId: string, parentAuthorName: string) => {
+    e.preventDefault();
+    playClick();
+    setReplyValidationError(null);
+
+    const trimmedName = replyName.trim();
+    const trimmedReply = replyText.trim();
+
+    if (!trimmedName) {
+      setReplyValidationError('Please enter your name.');
+      return;
+    }
+
+    if (!trimmedReply) {
+      setReplyValidationError('Please write a reply.');
+      return;
+    }
+
+    setIsSubmittingReply(true);
+
+    const now = new Date();
+    const formattedDate = now.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+    });
+    const formattedTime = now.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+
+    const newReply: JourneyReply = {
+      id: `jrep-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      comment_id: commentId,
+      name: trimmedName,
+      reply: trimmedReply,
+      date: formattedDate,
+      time: formattedTime,
+      created_at: now.toISOString(),
+    };
+
+    // Save reply to Supabase
+    insertJourneyReply(newReply).catch((err) =>
+      console.error('Supabase reply insert failed:', err)
+    );
+
+    // Broadcast toast alert
+    broadcastNewComment(trimmedName, `replied to ${parentAuthorName}: "${trimmedReply}"`);
+
+    playSuccess();
+
+    // Optimistically update local comments state with new reply
+    setComments((prev) =>
+      prev.map((c) => {
+        if (c.id === commentId) {
+          return {
+            ...c,
+            replies: [...(c.replies || []), newReply],
+          };
+        }
+        return c;
+      })
+    );
+
+    setIsSubmittingReply(false);
+    setReplyName('');
+    setReplyText('');
+    setReplyingToCommentId(null);
+  };
+
+  // Trigger Delete Reply Prompt
+  const handlePromptDeleteReply = (rep: JourneyReply) => {
+    playNotification();
+    setDeletingReply(rep);
+    setInputPassword('');
+    setPasswordError(false);
+    setDeleteSuccess(false);
+  };
+
+  // Confirm Delete Reply Password
+  const handleConfirmDeleteReply = async (e: FormEvent) => {
+    e.preventDefault();
+    if (inputPassword === ADMIN_PASSWORD) {
+      playSuccess();
+      setPasswordError(false);
+      setDeleteSuccess(true);
+      const id = deletingReply?.id;
+      if (id) {
+        deleteJourneyReply(id).catch((err) =>
+          console.error('Supabase reply delete failed:', err)
+        );
+      }
+      setTimeout(() => {
+        setComments((prev) =>
+          prev.map((c) => ({
+            ...c,
+            replies: (c.replies || []).filter((r) => r.id !== id),
+          }))
+        );
+        setDeletingReply(null);
         setDeleteSuccess(false);
       }, 1000);
     } else {
@@ -343,7 +495,52 @@ export function KinnaJourney() {
                   exit={{ opacity: 0, y: -20, scale: 0.98 }}
                   transition={{ duration: 0.35 }}
                   className="glass-card rounded-3xl p-6 md:p-10 border-2 border-yellow-500/40 shadow-[0_0_40px_rgba(255,215,0,0.15)] relative overflow-hidden mb-12"
+                  onTouchStart={(e) => { (e.currentTarget as any)._touchStartX = e.touches[0].clientX; }}
+                  onTouchEnd={(e) => {
+                    const startX = (e.currentTarget as any)._touchStartX ?? 0;
+                    const diff = startX - e.changedTouches[0].clientX;
+                    if (Math.abs(diff) > 50) {
+                      if (diff > 0 && activeChapterIndex < KINNA_JOURNEY.length - 1) handleSelectChapter(activeChapterIndex + 1);
+                      if (diff < 0 && activeChapterIndex > 0) handleSelectChapter(activeChapterIndex - 1);
+                    }
+                  }}
                 >
+                  {/* Left click zone → previous chapter */}
+                  {activeChapterIndex > 0 && (
+                    <div
+                      onClick={() => handleSelectChapter(activeChapterIndex - 1)}
+                      className="absolute left-0 top-0 bottom-0 w-[45%] z-10 cursor-w-resize"
+                    />
+                  )}
+                  {/* Right click zone → next chapter */}
+                  {activeChapterIndex < KINNA_JOURNEY.length - 1 && (
+                    <div
+                      onClick={() => handleSelectChapter(activeChapterIndex + 1)}
+                      className="absolute right-0 top-0 bottom-0 w-[45%] z-10 cursor-e-resize"
+                    />
+                  )}
+
+                  {/* Subtle left/right edge arrows (appear on hover) */}
+                  {activeChapterIndex > 0 && (
+                    <div
+                      onClick={() => handleSelectChapter(activeChapterIndex - 1)}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 z-30 opacity-0 hover:opacity-100 transition-opacity duration-200 cursor-pointer"
+                    >
+                      <div className="w-9 h-9 rounded-full bg-black/70 border border-yellow-500/40 flex items-center justify-center shadow-[0_0_12px_rgba(255,215,0,0.3)] hover:border-yellow-400 hover:shadow-[0_0_20px_rgba(255,215,0,0.5)] transition-all">
+                        <FiChevronLeft className="w-5 h-5 text-yellow-400" />
+                      </div>
+                    </div>
+                  )}
+                  {activeChapterIndex < KINNA_JOURNEY.length - 1 && (
+                    <div
+                      onClick={() => handleSelectChapter(activeChapterIndex + 1)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 z-30 opacity-0 hover:opacity-100 transition-opacity duration-200 cursor-pointer"
+                    >
+                      <div className="w-9 h-9 rounded-full bg-black/70 border border-yellow-500/40 flex items-center justify-center shadow-[0_0_12px_rgba(255,215,0,0.3)] hover:border-yellow-400 hover:shadow-[0_0_20px_rgba(255,215,0,0.5)] transition-all">
+                        <FiChevronRight className="w-5 h-5 text-yellow-400" />
+                      </div>
+                    </div>
+                  )}
                   {/* Top Classified Status Line */}
                   <div className="flex items-center justify-between border-b border-yellow-500/20 pb-4 mb-6 flex-wrap gap-3">
                     <div className="flex items-center gap-3">
@@ -427,6 +624,8 @@ export function KinnaJourney() {
                                   <img
                                     src={imgSrc}
                                     alt={`Operative ${imgIdx + 1}`}
+                                    loading="lazy"
+                                    decoding="async"
                                     className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                                   />
                                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-80" />
@@ -487,7 +686,7 @@ export function KinnaJourney() {
         {/* ════════════════════════════════════════════════════════════ */}
         {/* 💬 JOURNEY OPINIONS & COMMENTS TERMINAL WINDOW */}
         {/* ════════════════════════════════════════════════════════════ */}
-        <div className="glass-card rounded-3xl border-2 border-yellow-500/30 bg-black/90 shadow-[0_0_30px_rgba(255,215,0,0.12)] overflow-hidden">
+        <div id="journey-comments" className="glass-card rounded-3xl border-2 border-yellow-500/30 bg-black/90 shadow-[0_0_30px_rgba(255,215,0,0.12)] overflow-hidden">
           {/* Header Bar with ADD YOUR COMMENT Button */}
           <div className="p-5 border-b border-yellow-500/20 bg-yellow-500/5 flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-2.5">
@@ -529,43 +728,187 @@ export function KinnaJourney() {
                     exit={{ opacity: 0, scale: 0.95 }}
                     className="glass-card-hover rounded-2xl p-4 sm:p-5 border border-yellow-500/20 bg-black/80 shadow-[0_0_15px_rgba(255,215,0,0.05)] hover:border-yellow-400 transition-all group"
                   >
-                    <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-full bg-yellow-500/20 border border-yellow-400/50 flex items-center justify-center text-xs text-yellow-400 font-bold">
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="w-7 h-7 rounded-full bg-yellow-500/20 border border-yellow-400/50 flex items-center justify-center text-xs text-yellow-400 font-bold flex-shrink-0">
                           👤
                         </div>
                         <span className="font-display font-bold text-sm text-yellow-400">
                           {c.name}
                         </span>
-                      </div>
 
-                      <div className="flex items-center gap-2.5">
-                        {/* Exact Date & Time */}
-                        <div className="flex items-center gap-2 font-mono-custom text-[11px] text-yellow-500/60">
-                          <div className="flex items-center gap-1 bg-yellow-500/10 px-2 py-0.5 rounded border border-yellow-500/20">
-                            <FiCalendar className="w-3 h-3 text-yellow-400" />
-                            <span>{c.date}</span>
-                          </div>
-                          <div className="flex items-center gap-1 bg-yellow-500/10 px-2 py-0.5 rounded border border-yellow-500/20">
-                            <FiClock className="w-3 h-3 text-yellow-400" />
-                            <span>{c.time}</span>
-                          </div>
-                        </div>
-
-                        {/* Delete Button */}
+                        {/* Compact relative time next to user name (Clickable for exact Date & Time) */}
                         <button
-                          onClick={() => handlePromptDelete(c)}
-                          title="Delete opinion (Requires Password)"
-                          className="w-6 h-6 rounded-lg bg-red-950/80 border border-red-500/40 text-red-400 hover:bg-red-600 hover:text-white flex items-center justify-center transition-all"
+                          onClick={() => setExpandedTimeId(expandedTimeId === c.id ? null : c.id)}
+                          className="font-mono-custom text-xs text-yellow-500/60 hover:text-yellow-300 transition-colors flex items-center gap-1.5 cursor-pointer"
+                          title="Click to view exact date and time"
                         >
-                          <FiTrash2 className="w-3 h-3" />
+                          <span className="text-yellow-500/30">•</span>
+                          <span>{formatTimeAgo(c.created_at)}</span>
+                          {expandedTimeId === c.id && (
+                            <span className="text-[10px] text-yellow-400 font-mono-custom font-bold bg-yellow-500/10 px-2 py-0.5 rounded border border-yellow-500/30 ml-1">
+                              ({c.date} at {c.time})
+                            </span>
+                          )}
                         </button>
                       </div>
+
+                      {/* Delete Comment Button */}
+                      <button
+                        onClick={() => handlePromptDelete(c)}
+                        title="Delete opinion (Requires Password)"
+                        className="w-6 h-6 rounded-lg bg-red-950/80 border border-red-500/40 text-red-400 hover:bg-red-600 hover:text-white flex items-center justify-center transition-all flex-shrink-0"
+                      >
+                        <FiTrash2 className="w-3 h-3" />
+                      </button>
                     </div>
 
-                    <p className="font-sans text-xs sm:text-sm text-yellow-100/90 leading-relaxed pl-9 whitespace-pre-wrap">
-                      💬 "{c.comment}"
+                    {/* Comment Body Text */}
+                    <p className="font-sans text-xs sm:text-sm text-yellow-100/90 leading-relaxed pl-9 whitespace-pre-wrap mb-3">
+                      {c.comment}
                     </p>
+
+                    {/* ─── REPLY SECTION DIRECTLY UNDER COMMENT BODY ─── */}
+                    <div className="pl-9 mb-2">
+                      <button
+                        onClick={() => {
+                          playClick();
+                          setReplyingToCommentId(replyingToCommentId === c.id ? null : c.id);
+                          setReplyValidationError(null);
+                        }}
+                        className={`px-3 py-1 rounded-lg border text-xs font-mono-custom inline-flex items-center gap-1.5 transition-all ${
+                          replyingToCommentId === c.id
+                            ? 'bg-yellow-500 text-black border-yellow-400 font-bold shadow-[0_0_10px_#FFD700]'
+                            : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/20'
+                        }`}
+                      >
+                        <FiMessageCircle className="w-3.5 h-3.5" />
+                        <span>Reply {c.replies && c.replies.length > 0 ? `(${c.replies.length})` : ''}</span>
+                      </button>
+                    </div>
+
+                    {/* ─── INLINE REPLY FORM ─── */}
+                    <AnimatePresence>
+                      {replyingToCommentId === c.id && (
+                        <motion.form
+                          initial={{ opacity: 0, height: 0, marginTop: 0 }}
+                          animate={{ opacity: 1, height: 'auto', marginTop: 12 }}
+                          exit={{ opacity: 0, height: 0, marginTop: 0 }}
+                          onSubmit={(e) => handleReplySubmit(e, c.id, c.name)}
+                          className="ml-4 sm:ml-9 p-4 rounded-xl border border-yellow-500/30 bg-black/90 space-y-3 relative mb-3"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-mono-custom text-[11px] text-yellow-400 font-bold tracking-wider uppercase flex items-center gap-1">
+                              <span>↩ Replying to</span>
+                              <span className="text-yellow-300 font-bold">{c.name}</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setReplyingToCommentId(null)}
+                              className="text-yellow-500/50 hover:text-yellow-400 text-xs"
+                            >
+                              <FiX className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          {replyValidationError && (
+                            <div className="flex items-center gap-1.5 text-red-400 font-mono-custom text-xs">
+                              <FiAlertCircle className="w-3.5 h-3.5" />
+                              <span>{replyValidationError}</span>
+                            </div>
+                          )}
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <div>
+                              <input
+                                type="text"
+                                value={replyName}
+                                onChange={(e) => setReplyName(e.target.value)}
+                                placeholder="Your Name *"
+                                className="w-full bg-black/60 border border-yellow-500/30 rounded-lg p-2.5 text-xs text-yellow-100 font-mono-custom outline-none focus:border-yellow-400"
+                              />
+                            </div>
+                            <div className="sm:col-span-2">
+                              <input
+                                type="text"
+                                value={replyText}
+                                onChange={(e) => setReplyText(e.target.value)}
+                                placeholder={`Write your reply to ${c.name}... *`}
+                                className="w-full bg-black/60 border border-yellow-500/30 rounded-lg p-2.5 text-xs text-yellow-100 font-sans outline-none focus:border-yellow-400"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setReplyingToCommentId(null)}
+                              className="px-3 py-1.5 rounded-lg border border-yellow-500/20 text-yellow-500/60 font-mono-custom text-xs hover:text-yellow-400"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={isSubmittingReply}
+                              className="btn-gold px-4 py-1.5 rounded-lg font-display font-bold text-xs flex items-center gap-1.5 shadow-[0_0_15px_rgba(255,215,0,0.2)] disabled:opacity-50"
+                            >
+                              {isSubmittingReply ? (
+                                <FiLoader className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <FiSend className="w-3.5 h-3.5" />
+                              )}
+                              <span>POST REPLY</span>
+                            </button>
+                          </div>
+                        </motion.form>
+                      )}
+                    </AnimatePresence>
+
+                    {/* ─── NESTED REPLIES LIST UNDER COMMENT ─── */}
+                    {c.replies && c.replies.length > 0 && (
+                      <div className="mt-3 ml-4 sm:ml-9 space-y-2 border-l-2 border-yellow-500/20 pl-3">
+                        {c.replies.map((r) => (
+                          <div
+                            key={r.id}
+                            className="rounded-xl p-3 border border-yellow-500/15 bg-yellow-500/5 hover:border-yellow-500/30 transition-all group/rep"
+                          >
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[10px] text-yellow-400">↳</span>
+                                <span className="font-display font-bold text-xs text-yellow-300">
+                                  {r.name}
+                                </span>
+                                {/* Compact relative timestamp for reply */}
+                                <button
+                                  onClick={() => setExpandedTimeId(expandedTimeId === r.id ? null : r.id)}
+                                  className="font-mono-custom text-[11px] text-yellow-500/60 hover:text-yellow-300 cursor-pointer"
+                                  title="Click to view exact date and time"
+                                >
+                                  • {formatTimeAgo(r.created_at)}
+                                  {expandedTimeId === r.id && (
+                                    <span className="text-[10px] text-yellow-400 font-mono-custom font-bold bg-yellow-500/10 px-1.5 py-0.5 rounded border border-yellow-500/30 ml-1">
+                                      ({r.date} at {r.time})
+                                    </span>
+                                  )}
+                                </button>
+                              </div>
+
+                              <button
+                                onClick={() => handlePromptDeleteReply(r)}
+                                title="Delete reply"
+                                className="opacity-60 group-hover/rep:opacity-100 text-red-400 hover:text-red-300 p-0.5"
+                              >
+                                <FiTrash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+
+                            <p className="font-sans text-xs text-yellow-100/80 pl-4 leading-relaxed">
+                              {r.reply}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </motion.div>
                 ))}
               </AnimatePresence>
@@ -756,6 +1099,80 @@ export function KinnaJourney() {
                       className="w-full py-3 rounded-xl bg-red-600 border border-red-400 text-white font-display font-black text-xs tracking-widest hover:bg-red-500 transition-all shadow-[0_0_20px_rgba(255,0,64,0.4)]"
                     >
                       🗑️ CONFIRM DELETE
+                    </button>
+                  </form>
+                )}
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* ═══ Password-Protected Delete Reply Modal ═══ */}
+        <AnimatePresence>
+          {deletingReply && (
+            <div className="fixed inset-0 z-[99999] bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="relative w-full max-w-md glass-card rounded-3xl border-2 border-red-500/60 p-6 bg-black/95 shadow-[0_0_50px_rgba(255,0,64,0.3)]"
+              >
+                <button
+                  onClick={() => setDeletingReply(null)}
+                  className="absolute top-4 right-4 w-8 h-8 rounded-full bg-red-500/20 border border-red-500/40 text-red-400 flex items-center justify-center hover:bg-red-600 hover:text-white transition-colors"
+                >
+                  <FiX className="w-4 h-4" />
+                </button>
+
+                <div className="text-center mb-6">
+                  <div className="w-12 h-12 mx-auto rounded-full bg-red-500/20 border border-red-500/50 flex items-center justify-center text-red-500 mb-3 text-xl shadow-[0_0_15px_rgba(255,0,64,0.4)]">
+                    <FiLock />
+                  </div>
+                  <h3 className="font-display font-black text-lg text-red-400 mb-1">
+                    ADMIN PASSWORD REQUIRED
+                  </h3>
+                  <p className="font-mono-custom text-xs text-yellow-500/60">
+                    Enter security password to delete this reply by {deletingReply.name}
+                  </p>
+                </div>
+
+                {deleteSuccess ? (
+                  <div className="py-4 text-center space-y-2">
+                    <FiCheckCircle className="w-10 h-10 text-green-400 mx-auto" />
+                    <div className="font-display font-bold text-base text-green-400">
+                      REPLY DELETED!
+                    </div>
+                  </div>
+                ) : (
+                  <form onSubmit={handleConfirmDeleteReply} className="space-y-4">
+                    <div>
+                      <label className="block font-mono-custom text-xs text-red-400 font-bold mb-2">
+                        ENTER PASSWORD
+                      </label>
+                      <input
+                        type="password"
+                        value={inputPassword}
+                        onChange={(e) => {
+                          setInputPassword(e.target.value);
+                          setPasswordError(false);
+                        }}
+                        placeholder="••••••••••••"
+                        required
+                        className="w-full bg-black/80 border-2 border-red-500/40 rounded-xl p-3 text-center text-base text-yellow-300 font-mono-custom outline-none focus:border-red-400 tracking-widest"
+                      />
+                      {passwordError && (
+                        <div className="mt-2 text-red-500 font-mono-custom text-xs flex items-center justify-center gap-1.5 font-bold">
+                          <FiAlertCircle className="w-4 h-4" />
+                          <span>INVALID PASSWORD! ACCESS DENIED.</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="w-full py-3 rounded-xl bg-red-600 border border-red-400 text-white font-display font-black text-xs tracking-widest hover:bg-red-500 transition-all shadow-[0_0_20px_rgba(255,0,64,0.4)]"
+                    >
+                      🗑️ CONFIRM DELETE REPLY
                     </button>
                   </form>
                 )}

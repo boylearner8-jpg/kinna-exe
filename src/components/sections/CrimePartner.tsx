@@ -398,6 +398,8 @@ export function CrimePartner() {
                     <img
                       src={partner.image}
                       alt={partner.name}
+                      loading="lazy"
+                      decoding="async"
                       draggable={false}
                       className="w-full h-full object-cover group-hover/card:scale-110 transition-transform duration-700 pointer-events-none"
                     />

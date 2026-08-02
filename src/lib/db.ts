@@ -14,10 +14,31 @@ export interface GalleryMemory {
   created_at?: string;
 }
 
+export interface JourneyReply {
+  id: string;
+  comment_id: string;
+  name: string;
+  reply: string;
+  date: string;
+  time: string;
+  created_at: string;
+}
+
 export interface JourneyComment {
   id: string;
   name: string;
   comment: string;
+  date: string;
+  time: string;
+  created_at: string;
+  replies?: JourneyReply[];
+}
+
+export interface GuestbookReply {
+  id: string;
+  message_id: string;
+  name: string;
+  reply: string;
   date: string;
   time: string;
   created_at: string;
@@ -30,6 +51,7 @@ export interface GuestbookMessage {
   date: string;
   time: string;
   created_at: string;
+  replies?: GuestbookReply[];
 }
 
 // ══════════════════════════════════════════════
@@ -130,24 +152,96 @@ export async function deleteGalleryMemory(id: string): Promise<boolean> {
 // ══════════════════════════════════════════════
 
 export async function fetchJourneyComments(): Promise<JourneyComment[]> {
-  const { data, error } = await supabase
+  const { data: commentsData, error: e1 } = await supabase
     .from('journey_comments')
     .select('*')
     .order('created_at', { ascending: false });
 
-  if (error) {
-    console.error('Error fetching journey comments:', error.message);
+  if (e1) {
+    console.error('Error fetching journey comments:', e1.message);
     return [];
   }
 
-  return (data ?? []).map((row: any) => ({
+  // Fetch replies (gracefully handles if table is created later)
+  let repliesData: any[] = [];
+  try {
+    const { data: rd, error: e2 } = await supabase
+      .from('journey_replies')
+      .select('*')
+      .order('created_at', { ascending: true });
+    if (!e2 && rd) repliesData = rd;
+  } catch (err) {
+    /* fallback empty */
+  }
+
+  const repliesByCommentId: Record<string, JourneyReply[]> = {};
+  repliesData.forEach((r: any) => {
+    if (!repliesByCommentId[r.comment_id]) repliesByCommentId[r.comment_id] = [];
+    repliesByCommentId[r.comment_id].push({
+      id: r.id,
+      comment_id: r.comment_id,
+      name: r.name,
+      reply: r.reply,
+      date: r.date,
+      time: r.time,
+      created_at: r.created_at,
+    });
+  });
+
+  return (commentsData ?? []).map((row: any) => ({
     id: row.id,
     name: row.name,
     comment: row.comment,
     date: row.date,
     time: row.time,
     created_at: row.created_at,
+    replies: repliesByCommentId[row.id] || [],
   }));
+}
+
+export async function insertJourneyReply(
+  reply: Omit<JourneyReply, 'created_at'>
+): Promise<JourneyReply | null> {
+  const { data, error } = await supabase
+    .from('journey_replies')
+    .insert({
+      id: reply.id,
+      comment_id: reply.comment_id,
+      name: reply.name,
+      reply: reply.reply,
+      date: reply.date,
+      time: reply.time,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error inserting journey reply:', error.message);
+    return null;
+  }
+
+  return {
+    id: data.id,
+    comment_id: data.comment_id,
+    name: data.name,
+    reply: data.reply,
+    date: data.date,
+    time: data.time,
+    created_at: data.created_at,
+  };
+}
+
+export async function deleteJourneyReply(id: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('journey_replies')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error deleting journey reply:', error.message);
+    return false;
+  }
+  return true;
 }
 
 export async function insertJourneyComment(
@@ -198,24 +292,96 @@ export async function deleteJourneyComment(id: string): Promise<boolean> {
 // ══════════════════════════════════════════════
 
 export async function fetchGuestbookMessages(): Promise<GuestbookMessage[]> {
-  const { data, error } = await supabase
+  const { data: msgData, error: e1 } = await supabase
     .from('guestbook_messages')
     .select('*')
     .order('created_at', { ascending: false });
 
-  if (error) {
-    console.error('Error fetching guestbook messages:', error.message);
+  if (e1) {
+    console.error('Error fetching guestbook messages:', e1.message);
     return [];
   }
 
-  return (data ?? []).map((row: any) => ({
+  // Fetch guestbook replies (gracefully handles missing table)
+  let repliesData: any[] = [];
+  try {
+    const { data: rd, error: e2 } = await supabase
+      .from('guestbook_replies')
+      .select('*')
+      .order('created_at', { ascending: true });
+    if (!e2 && rd) repliesData = rd;
+  } catch (err) {
+    /* fallback empty */
+  }
+
+  const repliesByMessageId: Record<string, GuestbookReply[]> = {};
+  repliesData.forEach((r: any) => {
+    if (!repliesByMessageId[r.message_id]) repliesByMessageId[r.message_id] = [];
+    repliesByMessageId[r.message_id].push({
+      id: r.id,
+      message_id: r.message_id,
+      name: r.name,
+      reply: r.reply,
+      date: r.date,
+      time: r.time,
+      created_at: r.created_at,
+    });
+  });
+
+  return (msgData ?? []).map((row: any) => ({
     id: row.id,
     name: row.name,
     message: row.message,
     date: row.date,
     time: row.time,
     created_at: row.created_at,
+    replies: repliesByMessageId[row.id] || [],
   }));
+}
+
+export async function insertGuestbookReply(
+  reply: Omit<GuestbookReply, 'created_at'>
+): Promise<GuestbookReply | null> {
+  const { data, error } = await supabase
+    .from('guestbook_replies')
+    .insert({
+      id: reply.id,
+      message_id: reply.message_id,
+      name: reply.name,
+      reply: reply.reply,
+      date: reply.date,
+      time: reply.time,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error inserting guestbook reply:', error.message);
+    return null;
+  }
+
+  return {
+    id: data.id,
+    message_id: data.message_id,
+    name: data.name,
+    reply: data.reply,
+    date: data.date,
+    time: data.time,
+    created_at: data.created_at,
+  };
+}
+
+export async function deleteGuestbookReply(id: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('guestbook_replies')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error deleting guestbook reply:', error.message);
+    return false;
+  }
+  return true;
 }
 
 export async function insertGuestbookMessage(

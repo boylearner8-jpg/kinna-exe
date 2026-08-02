@@ -89,6 +89,8 @@ export function Kinnapedia() {
                   <img
                     src="/kinna.jpg"
                     alt="Kinna"
+                    loading="lazy"
+                    decoding="async"
                     className="w-full h-full object-cover object-top"
                   />
                   <div className="absolute bottom-2 left-2 right-2 bg-black/80 backdrop-blur-md px-2 py-1 rounded text-center font-mono-custom text-[10px] text-yellow-400 border border-yellow-500/30">

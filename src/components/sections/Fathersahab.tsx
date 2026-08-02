@@ -72,6 +72,8 @@ export function Fathersahab() {
               <img
                 src="/pradhan_ji.jpg"
                 alt="Father & Son - Kinna & Pradhan Ji"
+                loading="lazy"
+                decoding="async"
                 className="w-full h-auto object-cover transform group-hover:scale-105 transition-transform duration-700"
               />
 

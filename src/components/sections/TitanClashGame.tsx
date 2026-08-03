@@ -1,11 +1,17 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useScrollReveal, useSound } from '../../hooks/useKinna';
+import { fetchTitanLeaderboard, saveTitanScore, clearTitanLeaderboard } from '../../lib/db';
+import type { TitanScore } from '../../lib/db';
 import {
   FiZap,
   FiRefreshCw,
   FiPlay,
+  FiAward,
+  FiUser,
+  FiX,
+  FiTrash2,
 } from 'react-icons/fi';
 
 interface Enemy {
@@ -68,6 +74,18 @@ export function TitanClashGame() {
   const { ref, visible } = useScrollReveal(0.1);
   const { playClick, playSuccess, playBoom, playNotification } = useSound();
 
+  // Prevent double saving score flag
+  const hasSavedScoreRef = useRef(false);
+
+  // Player Name State
+  const [playerName, setPlayerName] = useState<string>(() => {
+    try {
+      return localStorage.getItem('kinna_titan_player_name') || '';
+    } catch {
+      return '';
+    }
+  });
+
   // Game state
   const [isPlaying, setIsPlaying] = useState(false);
   const [score, setScore] = useState(0);
@@ -85,6 +103,39 @@ export function TitanClashGame() {
   const [gameOver, setGameOver] = useState(false);
   const [victory, setVictory] = useState(false);
 
+  // Leaderboard state
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [leaderboard, setLeaderboard] = useState<TitanScore[]>([]);
+  const [loadingLeaderboard, setLoadingLeaderboard] = useState(false);
+
+  // Load Leaderboard data
+  const loadLeaderboard = async () => {
+    setLoadingLeaderboard(true);
+    try {
+      const data = await fetchTitanLeaderboard();
+      setLeaderboard(data);
+    } catch (err) {
+      console.error('Failed to load leaderboard:', err);
+    } finally {
+      setLoadingLeaderboard(false);
+    }
+  };
+
+  useEffect(() => {
+    loadLeaderboard();
+  }, []);
+
+  const handleClearLeaderboard = async () => {
+    const pass = prompt('Enter Admin Password to clear Leaderboard:');
+    if (pass === 'minaramchutiya') {
+      await clearTitanLeaderboard();
+      setLeaderboard([]);
+      alert('Leaderboard cleared successfully!');
+    } else if (pass !== null) {
+      alert('Incorrect Password!');
+    }
+  };
+
   // Special ability cooldowns
   const [shockwaveCooldown, setShockwaveCooldown] = useState(0);
   const [cavalryCooldown, setCavalryCooldown] = useState(0);
@@ -98,6 +149,7 @@ export function TitanClashGame() {
   // Start game
   const startGame = () => {
     playBoom();
+    hasSavedScoreRef.current = false; // Reset double-save lock
     setIsPlaying(true);
     setScore(0);
     setCombo(1);
@@ -138,12 +190,19 @@ export function TitanClashGame() {
   };
 
   // Helper to handle wave completion
-  const checkWaveCompletion = (remaining: Enemy[], currentWave: number) => {
+  const checkWaveCompletion = async (remaining: Enemy[], currentWave: number, currentScore: number) => {
     if (remaining.length === 0) {
       if (currentWave >= 5) {
+        if (hasSavedScoreRef.current) return;
+        hasSavedScoreRef.current = true; // Lock to prevent double saving!
+
         playSuccess();
         setVictory(true);
         setIsPlaying(false);
+
+        const nameToSave = playerName.trim() || 'Kinna Operative';
+        await saveTitanScore(nameToSave, currentScore, currentWave);
+        loadLeaderboard();
       } else {
         playNotification();
         const nextWave = currentWave + 1;
@@ -210,7 +269,7 @@ export function TitanClashGame() {
         })
         .filter(Boolean) as Enemy[];
 
-      checkWaveCompletion(updated, wave);
+      checkWaveCompletion(updated, wave, score);
       return updated;
     });
   };
@@ -244,7 +303,7 @@ export function TitanClashGame() {
         })
         .filter(Boolean) as Enemy[];
 
-      checkWaveCompletion(updated, wave);
+      checkWaveCompletion(updated, wave, score);
       return updated;
     });
   };
@@ -278,7 +337,7 @@ export function TitanClashGame() {
         })
         .filter(Boolean) as Enemy[];
 
-      checkWaveCompletion(updated, wave);
+      checkWaveCompletion(updated, wave, score);
       return updated;
     });
   };
@@ -341,12 +400,23 @@ export function TitanClashGame() {
               </span>
             </div>
 
-            <div className="flex items-center gap-4 text-yellow-300 font-bold">
+            <div className="flex items-center gap-4 text-yellow-300 font-bold flex-wrap">
               <div>SCORE: <span className="text-yellow-400 font-display text-sm">{score}</span></div>
               <div>HIGH: <span className="text-amber-400 font-display text-sm">{highScore}</span></div>
               <div className="bg-yellow-500/20 px-2 py-1 rounded border border-yellow-500/40">
                 WAVE {wave}/5
               </div>
+              <button
+                onClick={() => {
+                  playClick();
+                  loadLeaderboard();
+                  setShowLeaderboard((prev) => !prev);
+                }}
+                className="px-3 py-1 rounded-lg bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 hover:bg-yellow-500/30 font-bold inline-flex items-center gap-1.5 transition-all active:scale-95"
+              >
+                <FiAward className="w-3.5 h-3.5 text-yellow-400" />
+                <span>LEADERBOARD</span>
+              </button>
             </div>
           </div>
 
@@ -358,6 +428,74 @@ export function TitanClashGame() {
                 TITAN
               </div>
             </div>
+
+            {/* Leaderboard Modal Overlay */}
+            {showLeaderboard && (
+              <div className="absolute inset-0 z-40 bg-black/95 backdrop-blur-md p-4 sm:p-6 overflow-y-auto custom-scrollbar flex flex-col">
+                <div className="flex items-center justify-between border-b border-yellow-500/30 pb-3 mb-4">
+                  <div className="flex items-center gap-2 font-display text-yellow-400 text-lg font-black tracking-wider">
+                    <FiAward className="w-5 h-5 text-yellow-400" />
+                    <span>OPERATIVE LEADERBOARD</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleClearLeaderboard}
+                      className="px-2.5 py-1 rounded-lg bg-red-500/20 border border-red-500/40 text-red-400 font-mono-custom text-[11px] font-bold hover:bg-red-500/30 flex items-center gap-1"
+                      title="Clear Leaderboard Records (Admin Password)"
+                    >
+                      <FiTrash2 className="w-3.5 h-3.5" />
+                      <span>CLEAR</span>
+                    </button>
+                    <button
+                      onClick={() => setShowLeaderboard(false)}
+                      className="p-1.5 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/20"
+                    >
+                      <FiX className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {loadingLeaderboard ? (
+                  <div className="text-center py-10 font-mono-custom text-xs text-yellow-400/80 animate-pulse">
+                    Loading operative records from database...
+                  </div>
+                ) : leaderboard.length === 0 ? (
+                  <div className="text-center py-12 font-mono-custom text-xs text-yellow-400/70 space-y-2">
+                    <div className="text-2xl">🏆</div>
+                    <div className="font-bold text-yellow-300">NO OPERATIVE RECORDS YET</div>
+                    <div className="text-[11px] text-yellow-500/60 max-w-xs mx-auto">
+                      Be the very first operative to transform & top the Titan Clash Leaderboard!
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2 flex-1">
+                    {leaderboard.map((item, index) => {
+                      const rank = index + 1;
+                      const badge =
+                        rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `#${rank}`;
+                      return (
+                        <div
+                          key={item.id || index}
+                          className="flex items-center justify-between p-3 rounded-xl bg-yellow-500/5 border border-yellow-500/20 font-mono-custom text-xs"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="w-7 text-center font-bold text-sm text-yellow-400">{badge}</span>
+                            <div>
+                              <div className="font-bold text-yellow-300 text-sm">{item.player_name}</div>
+                              <div className="text-[10px] text-yellow-400/60">Wave Reached: {item.wave_reached}/5</div>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-display font-bold text-yellow-400 text-sm">{item.high_score || item.score}</div>
+                            <div className="text-[9px] text-yellow-500/60 uppercase tracking-widest">PTS</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             {isPlaying && !victory && !gameOver ? (
               <>
@@ -441,13 +579,13 @@ export function TitanClashGame() {
               </>
             ) : victory ? (
               /* Victory Screen */
-              <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-black/90 backdrop-blur-md">
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-4 sm:p-6 text-center bg-black/95 backdrop-blur-md overflow-y-auto custom-scrollbar z-30">
                 <motion.div
                   initial={{ scale: 0.8, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
-                  className="space-y-4 max-w-md"
+                  className="space-y-2.5 sm:space-y-4 max-w-sm sm:max-w-md my-auto"
                 >
-                  <div className="w-24 h-24 sm:w-28 sm:h-28 mx-auto rounded-full overflow-hidden border-4 border-yellow-400 shadow-[0_0_30px_#FFD700] bg-black">
+                  <div className="w-16 h-16 sm:w-24 sm:h-24 mx-auto rounded-full overflow-hidden border-2 sm:border-4 border-yellow-400 shadow-[0_0_25px_#FFD700] bg-black flex-shrink-0">
                     <img
                       src="/kinna_victory.jpg"
                       alt="Kinna Victory"
@@ -456,58 +594,103 @@ export function TitanClashGame() {
                       className="w-full h-full object-cover"
                     />
                   </div>
-                  <h3 className="font-display font-black text-3xl sm:text-4xl text-yellow-400">
+                  <h3 className="font-display font-black text-xl sm:text-3xl text-yellow-400 leading-tight">
                     PAPER LEAK CARTEL DESTROYED!
                   </h3>
-                  <p className="font-mono-custom text-xs sm:text-sm text-yellow-100/90 leading-relaxed">
+                  <p className="font-mono-custom text-[11px] sm:text-xs text-yellow-100/90 leading-relaxed max-w-xs sm:max-w-md mx-auto">
                     Kinna’s 500ft Titan successfully defeated Papa Ayush & crushed all 5 waves of paper leak villains! 100% Student Justice delivered!
                   </p>
 
-                  <div className="bg-yellow-500/10 p-4 rounded-2xl border border-yellow-500/30 font-mono-custom text-xs text-yellow-300 space-y-1">
-                    <div>FINAL SCORE: <span className="font-display text-base text-yellow-400">{score}</span></div>
-                    <div>HIGH SCORE: <span className="font-display text-base text-amber-400">{highScore}</span></div>
+                  <div className="bg-yellow-500/10 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl border border-yellow-500/30 font-mono-custom text-[11px] sm:text-xs text-yellow-300 space-y-0.5 sm:space-y-1">
+                    <div>OPERATIVE: <span className="font-bold text-yellow-400">{playerName || 'Kinna Operative'}</span></div>
+                    <div>FINAL SCORE: <span className="font-display text-sm sm:text-base text-yellow-400">{score}</span></div>
+                    <div>HIGH SCORE: <span className="font-display text-sm sm:text-base text-amber-400">{highScore}</span></div>
                   </div>
 
-                  <button
-                    onClick={startGame}
-                    className="btn-gold px-8 py-3.5 rounded-2xl font-display font-bold text-xs inline-flex items-center gap-2 shadow-[0_0_25px_rgba(255,215,0,0.4)]"
-                  >
-                    <FiRefreshCw className="w-4 h-4" />
-                    <span>PLAY AGAIN</span>
-                  </button>
+                  <div className="pt-1 flex justify-center gap-2">
+                    <button
+                      onClick={startGame}
+                      className="btn-gold px-6 sm:px-8 py-2.5 sm:py-3.5 rounded-xl sm:rounded-2xl font-display font-bold text-xs inline-flex items-center gap-2 shadow-[0_0_25px_rgba(255,215,0,0.4)]"
+                    >
+                      <FiRefreshCw className="w-4 h-4" />
+                      <span>PLAY AGAIN</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        playClick();
+                        setShowLeaderboard(true);
+                      }}
+                      className="px-4 py-2.5 sm:py-3.5 rounded-xl sm:rounded-2xl font-mono-custom font-bold text-xs bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 hover:bg-yellow-500/30 inline-flex items-center gap-2"
+                    >
+                      <FiAward className="w-4 h-4 text-yellow-400" />
+                      <span>LEADERBOARD</span>
+                    </button>
+                  </div>
                 </motion.div>
               </div>
             ) : (
               /* Start Screen */
-              <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-black/90 backdrop-blur-md">
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-4 sm:p-6 text-center bg-black/95 backdrop-blur-md overflow-y-auto custom-scrollbar z-30">
                 <motion.div
                   initial={{ scale: 0.9, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
-                  className="space-y-4 max-w-md"
+                  className="space-y-2.5 sm:space-y-4 max-w-sm sm:max-w-md my-auto"
                 >
-                  <div className="w-24 h-24 sm:w-28 sm:h-28 mx-auto rounded-full overflow-hidden border-4 border-yellow-400 shadow-[0_0_30px_#FFD700] animate-pulse bg-black">
+                  <div className="w-16 h-16 sm:w-24 sm:h-24 mx-auto rounded-full overflow-hidden border-2 sm:border-4 border-yellow-400 shadow-[0_0_25px_#FFD700] animate-pulse bg-black flex-shrink-0">
                     <img
-                      src="/kinna_final_form.jpg"
-                      alt="500ft Titan Kinna"
+                      src="/titan_start_pfp.jpg"
+                      alt="Kinna Operative Specimen"
                       loading="lazy"
                       decoding="async"
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover object-top"
                     />
                   </div>
-                  <h3 className="font-display font-black text-2xl sm:text-3xl text-yellow-400">
+                  <h3 className="font-display font-black text-xl sm:text-2xl text-yellow-400 leading-tight">
                     TITAN CLASH: CJP REVOLUTION
                   </h3>
-                  <p className="font-mono-custom text-xs sm:text-sm text-yellow-100/80 leading-relaxed">
+
+                  {/* Operative Name Input */}
+                  <div className="w-full max-w-xs mx-auto text-left mb-1">
+                    <label className="block font-mono-custom text-[10px] text-yellow-400 font-bold uppercase tracking-widest mb-1 flex items-center gap-1">
+                      <FiUser className="w-3 h-3 text-yellow-400" />
+                      <span>YOUR OPERATIVE NAME:</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={playerName}
+                      onChange={(e) => {
+                        setPlayerName(e.target.value);
+                        try {
+                          localStorage.setItem('kinna_titan_player_name', e.target.value);
+                        } catch {}
+                      }}
+                      placeholder="Enter your name..."
+                      maxLength={25}
+                      className="w-full bg-black/90 border border-yellow-500/40 rounded-xl px-3 py-2 text-yellow-300 font-mono-custom text-xs outline-none focus:border-yellow-400 text-center"
+                    />
+                  </div>
+
+                  <p className="font-mono-custom text-[11px] sm:text-xs text-yellow-100/80 leading-relaxed max-w-xs sm:max-w-md mx-auto">
                     Tap/click on Papa Ayush barriers, paper leak brokers, and corrupt examiners to crush them with Kinna’s 500ft Titan fists!
                   </p>
 
-                  <div className="flex justify-center gap-3 pt-2">
+                  <div className="pt-1 flex justify-center gap-2">
                     <button
                       onClick={startGame}
-                      className="btn-gold px-8 py-4 rounded-2xl font-display font-black text-sm tracking-widest inline-flex items-center gap-2 shadow-[0_0_30px_rgba(255,215,0,0.4)] hover:scale-105 transition-all"
+                      className="btn-gold px-6 sm:px-8 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-display font-black text-xs sm:text-sm tracking-widest inline-flex items-center gap-2 shadow-[0_0_30px_rgba(255,215,0,0.4)] hover:scale-105 transition-all"
                     >
-                      <FiPlay className="w-5 h-5 text-black font-bold" />
+                      <FiPlay className="w-4 h-4 sm:w-5 sm:h-5 text-black font-bold" />
                       <span>TRANSFORM & PLAY</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        playClick();
+                        setShowLeaderboard(true);
+                      }}
+                      className="px-4 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-mono-custom font-bold text-xs bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 hover:bg-yellow-500/30 inline-flex items-center gap-2"
+                    >
+                      <FiAward className="w-4 h-4 text-yellow-400" />
+                      <span>LEADERBOARD</span>
                     </button>
                   </div>
                 </motion.div>

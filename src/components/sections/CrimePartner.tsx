@@ -443,111 +443,127 @@ export function CrimePartner() {
       {/* Story Dossier Modal */}
       <AnimatePresence>
         {selectedPartner && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto">
+          <div
+            onClick={handleCloseModal}
+            className="fixed inset-0 z-[99999] bg-black/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-hidden cursor-pointer"
+          >
             <motion.div
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-3xl glass-card rounded-3xl border-2 border-yellow-500/50 p-6 md:p-8 max-h-[90vh] overflow-y-auto shadow-[0_0_50px_rgba(255,215,0,0.2)] bg-black/95"
+              onClick={handleCloseModal}
+              style={{
+                maxWidth: 'min(38rem, calc(100vw - 24px))',
+                maxHeight: 'calc(100dvh - 24px)',
+              }}
+              className="relative w-full glass-card rounded-3xl border-2 border-yellow-500/50 p-4 sm:p-6 overflow-y-auto shadow-[0_0_50px_rgba(255,215,0,0.2)] bg-black/95 my-auto cursor-pointer"
             >
-              {/* Close Button */}
-              <button
-                onClick={handleCloseModal}
-                className="absolute top-4 right-4 w-10 h-10 rounded-full bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 flex items-center justify-center hover:bg-yellow-500 hover:text-black transition-colors z-20"
-              >
-                <FiX className="w-5 h-5" />
-              </button>
+              {/* Close Button & Tap-to-close Hint */}
+              <div className="flex items-center justify-between border-b border-yellow-500/20 pb-3 mb-4">
+                <div className="font-mono-custom text-[10px] text-yellow-400/80 font-bold flex items-center gap-1 uppercase tracking-widest">
+                  <span>TAP ANYWHERE TO CLOSE</span>
+                </div>
+                <button
+                  onClick={handleCloseModal}
+                  className="w-8 h-8 rounded-full bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 flex items-center justify-center hover:bg-yellow-500 hover:text-black transition-colors"
+                >
+                  <FiX className="w-4 h-4" />
+                </button>
+              </div>
 
               {/* Modal Header */}
-              <div className="flex flex-col sm:flex-row items-center gap-6 pb-6 border-b border-yellow-500/20 mb-6">
-                <div className="w-32 h-32 rounded-2xl overflow-hidden border-2 border-yellow-400 flex-shrink-0 shadow-[0_0_20px_#FFD700]">
+              <div className="flex flex-row items-center gap-4 pb-4 border-b border-yellow-500/20 mb-4">
+                <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden border-2 border-yellow-400 flex-shrink-0 shadow-[0_0_15px_#FFD700]">
                   <img
                     src={selectedPartner.image}
                     alt={selectedPartner.name}
                     className="w-full h-full object-cover"
                   />
                 </div>
-                <div className="text-center sm:text-left">
-                  <div className="flex items-center justify-center sm:justify-start gap-2 mb-1">
-                    <span className="text-2xl">{selectedPartner.icon}</span>
-                    <span className="font-mono-custom text-xs text-red-400 font-bold tracking-widest uppercase">
+                <div className="text-left min-w-0">
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <span className="text-lg sm:text-xl">{selectedPartner.icon}</span>
+                    <span className="font-mono-custom text-[9px] text-red-400 font-bold tracking-widest uppercase truncate">
                       CLASSIFIED DOSSIER
                     </span>
                   </div>
-                  <h3 className="font-display font-black text-3xl text-yellow-400 mb-1">
+                  <h3 className="font-display font-black text-xl sm:text-2xl text-yellow-400 leading-tight mb-1 truncate">
                     {selectedPartner.name}
                   </h3>
-                  <p className="font-mono-custom text-xs text-yellow-200/80 mb-3">
+                  <p className="font-mono-custom text-[11px] text-yellow-200/80 line-clamp-1 mb-2">
                     {selectedPartner.role}
                   </p>
-                  <div className="inline-block px-3 py-1 rounded-full bg-yellow-500/20 border border-yellow-500/50 text-yellow-300 font-mono-custom text-[10px]">
+                  <div className="inline-block px-2.5 py-0.5 rounded-full bg-yellow-500/20 border border-yellow-500/50 text-yellow-300 font-mono-custom text-[9px] truncate">
                     ⚡ BUFF: {selectedPartner.perk}
                   </div>
                 </div>
               </div>
 
               {/* Story Content */}
-              <div className="space-y-6">
+              <div className="space-y-4 text-left">
                 <div>
-                  <h4 className="font-display font-bold text-lg text-yellow-400 mb-2 flex items-center gap-2">
-                    <FiBookOpen className="w-5 h-5 text-red-400" />
-                    STORY & RELATIONSHIP WITH KINNA
+                  <h4 className="font-display font-bold text-sm sm:text-base text-yellow-400 mb-1.5 flex items-center gap-2">
+                    <FiBookOpen className="w-4 h-4 text-red-400 flex-shrink-0" />
+                    <span>STORY &amp; RELATIONSHIP WITH KINNA</span>
                   </h4>
-                  <div className="glass-card p-5 rounded-2xl border border-yellow-500/20 bg-black/60 font-sans text-sm text-yellow-100/90 leading-relaxed">
+                  <div className="glass-card p-3.5 sm:p-4 rounded-xl border border-yellow-500/20 bg-black/60 font-sans text-xs sm:text-sm text-yellow-100/90 leading-relaxed">
                     {selectedPartner.story}
                   </div>
                 </div>
 
                 {/* Synergy Score Diagnostics */}
-                <div className="glass-card p-5 rounded-2xl border border-red-500/30 flex flex-col sm:flex-row items-center justify-between gap-4">
-                  <div className="flex items-center gap-4">
-                    <div className="w-14 h-14 rounded-full bg-gradient-to-br from-red-600 to-yellow-500 border border-yellow-400 flex flex-col items-center justify-center font-display font-black text-lg text-white shadow-[0_0_15px_#ff0040]">
+                <div className="glass-card p-3.5 rounded-xl border border-red-500/30 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-11 h-11 rounded-full bg-gradient-to-br from-red-600 to-yellow-500 border border-yellow-400 flex flex-col items-center justify-center font-display font-black text-xs text-white shadow-[0_0_12px_#ff0040] flex-shrink-0">
                       {synergyScore}%
                     </div>
                     <div>
-                      <div className="font-mono-custom text-xs text-yellow-400 font-bold">
+                      <div className="font-mono-custom text-[11px] text-yellow-400 font-bold">
                         CHAOS SYNERGY SCORE
                       </div>
-                      <div className="font-mono-custom text-[10px] text-yellow-500/60">
-                        Compatibility level with Kinna's frequency
+                      <div className="font-mono-custom text-[9px] text-yellow-500/60">
+                        Compatibility with Kinna
                       </div>
                     </div>
                   </div>
 
                   <button
                     disabled={testingSynergy}
-                    onClick={handleTestSynergy}
-                    className="btn-gold px-5 py-2.5 rounded-xl font-display text-xs tracking-widest flex items-center gap-2"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleTestSynergy();
+                    }}
+                    className="btn-gold px-3 py-2 rounded-xl font-display text-[10px] tracking-widest flex items-center gap-1.5 flex-shrink-0"
                   >
-                    <FiZap className={`w-4 h-4 ${testingSynergy ? 'animate-spin' : ''}`} />
-                    RUN DIAGNOSTIC
+                    <FiZap className={`w-3.5 h-3.5 ${testingSynergy ? 'animate-spin' : ''}`} />
+                    <span>DIAGNOSTIC</span>
                   </button>
                 </div>
 
                 {/* Joint Operations */}
                 <div>
-                  <h4 className="font-display font-bold text-base text-yellow-400 mb-3 flex items-center gap-2">
-                    <FiAlertTriangle className="w-4 h-4 text-red-400" />
-                    RECORDED JOINT OPERATIONS WITH KINNA
+                  <h4 className="font-display font-bold text-xs sm:text-sm text-yellow-400 mb-2 flex items-center gap-2">
+                    <FiAlertTriangle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+                    <span>RECORDED JOINT OPERATIONS</span>
                   </h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {selectedPartner.jointOperations.map((op) => (
                       <div
                         key={op.code}
-                        className="glass-card p-4 rounded-xl border border-yellow-500/20"
+                        className="glass-card p-3 rounded-xl border border-yellow-500/20"
                       >
                         <div className="flex items-center justify-between mb-1">
-                          <span className="font-mono-custom text-[10px] text-yellow-500/60">
+                          <span className="font-mono-custom text-[9px] text-yellow-500/60">
                             {op.code}
                           </span>
-                          <span className="font-mono-custom text-[9px] text-green-400 border border-green-500/40 px-2 py-0.5 rounded bg-green-500/10">
+                          <span className="font-mono-custom text-[8px] text-green-400 border border-green-500/40 px-1.5 py-0.5 rounded bg-green-500/10">
                             {op.status}
                           </span>
                         </div>
-                        <div className="font-display font-bold text-sm text-yellow-300 mb-1">
+                        <div className="font-display font-bold text-xs text-yellow-300 mb-0.5">
                           {op.name}
                         </div>
-                        <p className="text-xs text-yellow-100/70">
+                        <p className="text-[11px] text-yellow-100/70 leading-normal">
                           {op.description}
                         </p>
                       </div>

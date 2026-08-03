@@ -9,15 +9,14 @@ interface NavbarProps {
 }
 
 const NAV_ITEMS = [
+  { label: 'HORSE RUNNER', href: '#horse-runner' },
   { label: 'JOURNEY', href: '#journey' },
   { label: 'TITAN CLASH', href: '#titan-clash' },
   { label: 'CRIME PARTNER', href: '#crime-partner' },
-  { label: 'SYNERGY BATTLE', href: '#synergy-simulator' },
   { label: 'GALLERY', href: '#hall-of-fame' },
-  { label: 'KINNAPEDIA', href: '#kinnapedia' },
   { label: 'FATHERSAHAB', href: '#fathersahab' },
   { label: 'STATS', href: '#stats' },
-  { label: 'ADD MESSAGE', href: '#message' },
+  { label: 'KINNAPEDIA', href: '#kinnapedia' },
 ];
 
 export function Navbar({ muted, onToggleMute, onSecretTrigger }: NavbarProps) {

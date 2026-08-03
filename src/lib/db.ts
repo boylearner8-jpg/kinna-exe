@@ -54,6 +54,25 @@ export interface GuestbookMessage {
   replies?: GuestbookReply[];
 }
 
+export interface TitanScore {
+  id: string;
+  player_name: string;
+  score: number;
+  high_score: number;
+  wave_reached: number;
+  created_at?: string;
+}
+
+export interface HorseRunnerScore {
+  id: string;
+  player_name: string;
+  score: number;
+  high_score: number;
+  character_name?: string;
+  created_at?: string;
+}
+
+
 // ══════════════════════════════════════════════
 // GALLERY MEMORIES
 // ══════════════════════════════════════════════
@@ -514,3 +533,181 @@ export async function migrateLocalStorageToSupabase(): Promise<void> {
     console.error('Migration error:', err);
   }
 }
+
+// ══════════════════════════════════════════════
+// TITAN ARCADE LEADERBOARD
+// ══════════════════════════════════════════════
+
+const LOCAL_LEADERBOARD_KEY = 'kinna_titan_leaderboard_v2';
+
+export async function fetchTitanLeaderboard(): Promise<TitanScore[]> {
+  try {
+    const { data, error } = await supabase
+      .from('titan_scores')
+      .select('*')
+      .order('high_score', { ascending: false })
+      .limit(20);
+
+    if (error) throw error;
+    if (data && data.length > 0) {
+      return data;
+    }
+  } catch (err) {
+    console.warn('Supabase fetchTitanLeaderboard failed, falling back to localStorage:', err);
+  }
+
+  // Fallback to localStorage
+  try {
+    const raw = localStorage.getItem(LOCAL_LEADERBOARD_KEY);
+    if (raw) {
+      return JSON.parse(raw) as TitanScore[];
+    }
+  } catch {}
+
+  // Return empty array when no scores recorded yet
+  return [];
+}
+
+export async function saveTitanScore(playerName: string, finalScore: number, waveReached: number): Promise<void> {
+  const newEntry: TitanScore = {
+    id: `ts-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    player_name: playerName.trim() || 'Kinna Operative',
+    score: finalScore,
+    high_score: finalScore,
+    wave_reached: waveReached,
+    created_at: new Date().toISOString(),
+  };
+
+  // 1. Try to save to Supabase
+  try {
+    await supabase.from('titan_scores').insert({
+      id: newEntry.id,
+      player_name: newEntry.player_name,
+      score: newEntry.score,
+      high_score: newEntry.high_score,
+      wave_reached: newEntry.wave_reached,
+      created_at: newEntry.created_at,
+    });
+  } catch (err) {
+    console.warn('Supabase saveTitanScore failed:', err);
+  }
+
+  // 2. Save locally
+  try {
+    const existing = await fetchTitanLeaderboard();
+    // Filter duplicates by player_name and score
+    const isDuplicate = existing.some(
+      (e) => e.player_name === newEntry.player_name && e.high_score === newEntry.high_score
+    );
+    if (!isDuplicate) {
+      const updated = [...existing, newEntry]
+        .sort((a, b) => b.high_score - a.high_score)
+        .slice(0, 50);
+      localStorage.setItem(LOCAL_LEADERBOARD_KEY, JSON.stringify(updated));
+    }
+  } catch {}
+}
+
+export async function clearTitanLeaderboard(): Promise<void> {
+  try {
+    localStorage.removeItem(LOCAL_LEADERBOARD_KEY);
+    localStorage.removeItem('kinna_titan_leaderboard_v1');
+    localStorage.removeItem('kinna_titan_highscore');
+  } catch {}
+
+  try {
+    await supabase.from('titan_scores').delete().neq('id', '0');
+  } catch (err) {
+    console.warn('Failed to clear Supabase titan_scores:', err);
+  }
+}
+
+// ══════════════════════════════════════════════
+// HORSE RUNNER LEADERBOARD
+// ══════════════════════════════════════════════
+
+const LOCAL_HORSE_LEADERBOARD_KEY = 'kinna_horse_leaderboard_v1';
+
+export async function fetchHorseRunnerLeaderboard(): Promise<HorseRunnerScore[]> {
+  try {
+    const { data, error } = await supabase
+      .from('horse_runner_scores')
+      .select('*')
+      .order('high_score', { ascending: false })
+      .limit(20);
+
+    if (error) throw error;
+    if (data && data.length > 0) {
+      return data;
+    }
+  } catch (err) {
+    console.warn('Supabase fetchHorseRunnerLeaderboard failed, falling back to localStorage:', err);
+  }
+
+  // Fallback to localStorage
+  try {
+    const raw = localStorage.getItem(LOCAL_HORSE_LEADERBOARD_KEY);
+    if (raw) {
+      return JSON.parse(raw) as HorseRunnerScore[];
+    }
+  } catch {}
+
+  return [];
+}
+
+export async function saveHorseRunnerScore(
+  playerName: string,
+  finalScore: number,
+  characterName?: string
+): Promise<void> {
+  const newEntry: HorseRunnerScore = {
+    id: `hr-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    player_name: playerName.trim() || 'Kinna Runner',
+    score: finalScore,
+    high_score: finalScore,
+    character_name: characterName || 'Motu Madhur & Aryan',
+    created_at: new Date().toISOString(),
+  };
+
+  // 1. Try to save to Supabase
+  try {
+    await supabase.from('horse_runner_scores').insert({
+      id: newEntry.id,
+      player_name: newEntry.player_name,
+      score: newEntry.score,
+      high_score: newEntry.high_score,
+      character_name: newEntry.character_name,
+      created_at: newEntry.created_at,
+    });
+  } catch (err) {
+    console.warn('Supabase saveHorseRunnerScore failed:', err);
+  }
+
+  // 2. Save locally
+  try {
+    const existing = await fetchHorseRunnerLeaderboard();
+    const isDuplicate = existing.some(
+      (e) => e.player_name === newEntry.player_name && e.high_score === newEntry.high_score
+    );
+    if (!isDuplicate) {
+      const updated = [...existing, newEntry]
+        .sort((a, b) => b.high_score - a.high_score)
+        .slice(0, 50);
+      localStorage.setItem(LOCAL_HORSE_LEADERBOARD_KEY, JSON.stringify(updated));
+    }
+  } catch {}
+}
+
+export async function clearHorseRunnerLeaderboard(): Promise<void> {
+  try {
+    localStorage.removeItem(LOCAL_HORSE_LEADERBOARD_KEY);
+    localStorage.removeItem('kinna_dino_highscore');
+  } catch {}
+
+  try {
+    await supabase.from('horse_runner_scores').delete().neq('id', '0');
+  } catch (err) {
+    console.warn('Failed to clear Supabase horse_runner_scores:', err);
+  }
+}
+

@@ -10,13 +10,13 @@ import { Navbar } from './components/Navbar';
 import { Hero } from './components/Hero';
 import { KinnaJourney } from './components/sections/KinnaJourney';
 import { TitanClashGame } from './components/sections/TitanClashGame';
+import { HorseRallyRunner } from './components/sections/HorseRallyRunner';
 import { PublicStats } from './components/sections/PublicStats';
 import { CrimePartner } from './components/sections/CrimePartner';
-import { SquadSynergySimulator } from './components/sections/SquadSynergySimulator';
 import { HallOfFame } from './components/sections/HallOfFame';
 import { Kinnapedia } from './components/sections/Kinnapedia';
 import { Fathersahab } from './components/sections/Fathersahab';
-import { LeaveMessage } from './components/sections/LeaveMessage';
+
 import { Footer } from './components/Footer';
 
 export default function App() {
@@ -42,9 +42,9 @@ export default function App() {
   };
 
   const scrollToDatabase = () => {
-    const journeyEl = document.getElementById('journey');
-    if (journeyEl) {
-      journeyEl.scrollIntoView({ behavior: 'smooth' });
+    const runnerEl = document.getElementById('horse-runner');
+    if (runnerEl) {
+      runnerEl.scrollIntoView({ behavior: 'smooth' });
     }
   };
 
@@ -83,15 +83,14 @@ export default function App() {
       {/* Main Content */}
       <main className="relative z-10">
         <Hero onEnter={scrollToDatabase} />
+        <HorseRallyRunner />
         <KinnaJourney />
         <TitanClashGame />
         <CrimePartner />
-        <SquadSynergySimulator />
         <HallOfFame />
-        <Kinnapedia />
         <Fathersahab />
         <PublicStats />
-        <LeaveMessage />
+        <Kinnapedia />
       </main>
 
       {/* Footer */}

@@ -634,61 +634,70 @@ export function HallOfFame() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setSelectedMemory(null)}
-              className="fixed inset-0 z-[99999] bg-black/95 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto"
+              className="fixed inset-0 z-[99999] bg-black/95 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-hidden"
             >
               <motion.div
                 initial={{ scale: 0.8, y: 20 }}
                 animate={{ scale: 1, y: 0 }}
                 exit={{ scale: 0.8, y: 20 }}
                 onClick={(e) => e.stopPropagation()}
-                className="glass-card max-w-4xl w-full rounded-3xl p-6 md:p-8 relative border-2 border-yellow-500/50 shadow-2xl bg-black/95 my-auto"
+                className="glass-card w-full rounded-3xl relative border-2 border-yellow-500/50 shadow-2xl bg-black/95 flex flex-col overflow-hidden"
+                style={{
+                  maxWidth: 'min(56rem, calc(100vw - 24px))',
+                  maxHeight: 'calc(100dvh - 24px)',
+                }}
               >
-                {/* Close Button */}
-                <button
-                  onClick={() => setSelectedMemory(null)}
-                  className="absolute top-4 right-4 p-2 rounded-full bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 hover:bg-yellow-500 hover:text-black transition-all z-10"
-                >
-                  <FiX className="w-5 h-5" />
-                </button>
-
-                {/* Original Aspect Ratio Image in Lightbox - Click again to close */}
-                <div
-                  onClick={() => setSelectedMemory(null)}
-                  className="relative max-h-[70vh] w-full flex items-center justify-center rounded-2xl overflow-hidden border border-yellow-500/30 mb-6 bg-black cursor-pointer group"
-                  title="Click again to close photo"
-                >
-                  <img
-                    src={selectedMemory.image}
-                    alt={selectedMemory.memoryText}
-                    className="max-h-[70vh] w-auto max-w-full object-contain mx-auto transition-transform duration-300 group-hover:scale-[1.02]"
-                  />
-                  <div className="absolute top-3 right-3 bg-black/80 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-mono-custom text-yellow-400 border border-yellow-500/40 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
-                    Click photo to close ✕
-                  </div>
-                </div>
-
-                {/* Lightbox Details */}
-                <div className="text-center space-y-2 max-w-2xl mx-auto pb-2">
-                  <p className="font-sans font-semibold text-lg text-yellow-300 leading-relaxed">
-                    "{selectedMemory.memoryText}"
-                  </p>
-                  {selectedMemory.date && (
-                    <div className="font-mono-custom text-xs text-yellow-500/60 flex items-center justify-center gap-1 pt-1">
-                      <FiHeart className="w-3.5 h-3.5 text-red-500" />
-                      <span>{selectedMemory.date}</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Bottom Corner Delete Option (Password Protected) */}
-                <div className="flex justify-end pt-4 border-t border-yellow-500/20">
+                {/* Scrollable inner body */}
+                <div className="overflow-y-auto flex-1 min-h-0" style={{ padding: 'clamp(12px, 3vw, 32px)' }}>
+                  {/* Close Button */}
                   <button
-                    onClick={(e) => handlePromptDelete(e, selectedMemory)}
-                    className="px-3.5 py-2 rounded-xl bg-red-950/80 border border-red-500/40 text-red-400 hover:bg-red-600 hover:text-white font-mono-custom text-xs flex items-center gap-2 transition-all shadow-lg"
+                    onClick={() => setSelectedMemory(null)}
+                    className="absolute top-3 right-3 p-2 rounded-full bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 hover:bg-yellow-500 hover:text-black transition-all z-10"
                   >
-                    <FiTrash2 className="w-4 h-4" />
-                    <span>DELETE PHOTO</span>
+                    <FiX className="w-5 h-5" />
                   </button>
+
+                  {/* Image — constrained to fit within the modal */}
+                  <div
+                    onClick={() => setSelectedMemory(null)}
+                    className="relative w-full flex items-center justify-center rounded-2xl overflow-hidden border border-yellow-500/30 mb-4 bg-black cursor-pointer group"
+                    title="Click again to close photo"
+                    style={{ maxHeight: 'clamp(200px, 55vh, 480px)' }}
+                  >
+                    <img
+                      src={selectedMemory.image}
+                      alt={selectedMemory.memoryText}
+                      className="w-auto max-w-full object-contain mx-auto transition-transform duration-300 group-hover:scale-[1.02]"
+                      style={{ maxHeight: 'clamp(200px, 55vh, 480px)' }}
+                    />
+                    <div className="absolute top-3 right-3 bg-black/80 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-mono-custom text-yellow-400 border border-yellow-500/40 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+                      Click photo to close ✕
+                    </div>
+                  </div>
+
+                  {/* Caption */}
+                  <div className="text-center space-y-2 max-w-2xl mx-auto pb-2">
+                    <p className="font-sans font-semibold text-base sm:text-lg text-yellow-300 leading-relaxed">
+                      "{selectedMemory.memoryText}"
+                    </p>
+                    {selectedMemory.date && (
+                      <div className="font-mono-custom text-xs text-yellow-500/60 flex items-center justify-center gap-1 pt-1">
+                        <FiHeart className="w-3.5 h-3.5 text-red-500" />
+                        <span>{selectedMemory.date}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Delete button */}
+                  <div className="flex justify-end pt-4 border-t border-yellow-500/20 mt-4">
+                    <button
+                      onClick={(e) => handlePromptDelete(e, selectedMemory)}
+                      className="px-3.5 py-2 rounded-xl bg-red-950/80 border border-red-500/40 text-red-400 hover:bg-red-600 hover:text-white font-mono-custom text-xs flex items-center gap-2 transition-all shadow-lg"
+                    >
+                      <FiTrash2 className="w-4 h-4" />
+                      <span>DELETE PHOTO</span>
+                    </button>
+                  </div>
                 </div>
               </motion.div>
             </motion.div>

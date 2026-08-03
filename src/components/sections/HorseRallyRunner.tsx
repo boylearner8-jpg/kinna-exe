@@ -5,8 +5,11 @@ import {
   fetchHorseRunnerLeaderboard,
   saveHorseRunnerScore,
   clearHorseRunnerLeaderboard,
+  fetchHorseRunnerConfig,
+  saveHorseRunnerConfig,
+  DEFAULT_HORSE_CONFIG,
 } from '../../lib/db';
-import type { HorseRunnerScore } from '../../lib/db';
+import type { HorseRunnerScore, HorseRunnerConfig } from '../../lib/db';
 import {
   FiPlay,
   FiRefreshCw,
@@ -17,6 +20,8 @@ import {
   FiUser,
   FiX,
   FiTrash2,
+  FiSettings,
+  FiSave,
 } from 'react-icons/fi';
 
 // Unified World Dimensions
@@ -121,6 +126,60 @@ export function HorseRallyRunner() {
   const activeCharacter =
     PLAYABLE_CHARACTERS.find((c) => c.id === selectedCharId) || PLAYABLE_CHARACTERS[0];
 
+  // Global dev config (fetched from Supabase on mount, applies to ALL players)
+  const gameConfigRef = useRef<HorseRunnerConfig>({ ...DEFAULT_HORSE_CONFIG });
+  const [devPanelOpen, setDevPanelOpen] = useState(false);
+  const [devConfig, setDevConfig] = useState<HorseRunnerConfig>({ ...DEFAULT_HORSE_CONFIG });
+  const [devSaving, setDevSaving] = useState(false);
+  const [devSaveMsg, setDevSaveMsg] = useState('');
+
+  useEffect(() => {
+    fetchHorseRunnerConfig().then((cfg) => {
+      gameConfigRef.current = cfg;
+      setDevConfig(cfg);
+    });
+  }, []);
+
+  // Triple-click developer trigger — require 3 clicks within 1.5s
+  const titleClickCountRef = useRef(0);
+  const titleClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleTitleClick = () => {
+    titleClickCountRef.current += 1;
+
+    if (titleClickTimerRef.current) {
+      clearTimeout(titleClickTimerRef.current);
+    }
+
+    if (titleClickCountRef.current >= 3) {
+      titleClickCountRef.current = 0;
+      const pass = prompt('🔐 Enter Developer Password:');
+      if (pass === 'minaramchutiya') {
+        setDevConfig({ ...gameConfigRef.current });
+        setDevSaveMsg('');
+        setDevPanelOpen(true);
+      }
+    } else {
+      titleClickTimerRef.current = setTimeout(() => {
+        titleClickCountRef.current = 0;
+      }, 1500);
+    }
+  };
+
+  const handleDevSave = async () => {
+    setDevSaving(true);
+    setDevSaveMsg('');
+    try {
+      await saveHorseRunnerConfig(devConfig);
+      gameConfigRef.current = { ...devConfig };
+      setDevSaveMsg('✅ Config saved globally! All players will use new settings on next game start.');
+    } catch {
+      setDevSaveMsg('❌ Failed to save. Check console.');
+    } finally {
+      setDevSaving(false);
+    }
+  };
+
   // Prevent double saving score flag
   const hasSavedScoreRef = useRef(false);
 
@@ -184,6 +243,7 @@ export function HorseRallyRunner() {
   // Direct GPU refs — zero React state during gameplay
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playerElRef = useRef<HTMLDivElement>(null);
+  const gameContainerRef = useRef<HTMLDivElement>(null);
 
   // Keep canvas pixel size in sync with its CSS size (critical for crisp mobile rendering)
   useEffect(() => {
@@ -204,6 +264,20 @@ export function HorseRallyRunner() {
     return () => ro.disconnect();
   }, []);
 
+  // Native non-passive touch listener to eliminate mobile touch input latency
+  useEffect(() => {
+    const el = gameContainerRef.current;
+    if (!el) return;
+
+    const onTouchStart = (e: TouchEvent) => {
+      e.preventDefault();
+      handleJump();
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: false });
+    return () => el.removeEventListener('touchstart', onTouchStart);
+  }, [isPlaying, gameOver]);
+
   // Engine Refs (runs inside 60FPS requestAnimationFrame)
   const animFrameRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(0);
@@ -214,18 +288,31 @@ export function HorseRallyRunner() {
   const playerYRef = useRef(0);
   const isJumpingRef = useRef(false);
   const jumpVelocityRef = useRef(0);
+  const jumpCountRef = useRef(0);
 
   const obstaclesRef = useRef<Obstacle[]>([]);
   const lastSpawnTimeRef = useRef(0);
   const startTimeRef = useRef(0);
 
-  // Jump Action (Dino Jump)
+  // Jump Action (Ground Jump & Continuous Air Boost when Multi-Jump Feature is ON)
   const handleJump = () => {
     if (gameOver || !isPlaying) return;
+
+    // Ground Jump (Jump 1)
     if (!isJumpingRef.current && playerYRef.current <= 0) {
       playClick();
       isJumpingRef.current = true;
+      jumpCountRef.current = 1;
       jumpVelocityRef.current = 11.5; // Smooth responsive jump
+    }
+    // Continuous Mid-Air Boost — click again & again to keep going up!
+    else if (
+      gameConfigRef.current?.doubleJumpEnabled &&
+      (isJumpingRef.current || playerYRef.current > 5)
+    ) {
+      playClick();
+      jumpCountRef.current += 1;
+      jumpVelocityRef.current = 10.5; // Upward air boost on every tap
     }
   };
 
@@ -254,10 +341,11 @@ export function HorseRallyRunner() {
 
     scoreRef.current = 0;
     lastRenderedScoreRef.current = 0;
-    speedRef.current = 16.0;
+    speedRef.current = gameConfigRef.current.baseSpeed;
     playerYRef.current = 0;
     isJumpingRef.current = false;
     jumpVelocityRef.current = 0;
+    jumpCountRef.current = 0;
     obstaclesRef.current = [];
 
     // Reset score displays directly
@@ -284,7 +372,7 @@ export function HorseRallyRunner() {
     startTimeRef.current = now;
   };
 
-  // Canvas draw helper — called every frame, zero React overhead
+  // Canvas draw helper — ultra optimized for mobile GPU
   const drawCanvas = (obstacles: Obstacle[]) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -308,15 +396,16 @@ export function HorseRallyRunner() {
     ctx.stroke();
     ctx.restore();
 
-    // Obstacles as emoji text on canvas
-    obstacles.forEach((obs) => {
+    // Obstacles as emoji text on canvas (set textBaseline once outside loop)
+    ctx.textBaseline = 'top';
+    for (let i = 0; i < obstacles.length; i++) {
+      const obs = obstacles[i];
       const x = (obs.x / WORLD_WIDTH) * cw;
       const y = groundPx - (obs.height / WORLD_HEIGHT) * ch;
       const fontSize = Math.round((obs.height / WORLD_HEIGHT) * ch * 1.1);
-      ctx.font = `${fontSize}px serif`;
-      ctx.textBaseline = 'top';
+      ctx.font = `${fontSize}px sans-serif`;
       ctx.fillText(obs.icon, x, y);
-    });
+    }
   };
 
   // Main 60FPS GPU Game Engine Loop
@@ -334,9 +423,16 @@ export function HorseRallyRunner() {
         playerYRef.current += jumpVelocityRef.current;
         jumpVelocityRef.current -= 0.44; // Crisp responsive gravity pull
 
+        // Ceiling cap so continuous multi-jumping keeps player visible inside canvas
+        if (playerYRef.current > 165) {
+          playerYRef.current = 165;
+          if (jumpVelocityRef.current > 0) jumpVelocityRef.current = 0;
+        }
+
         if (playerYRef.current <= 0) {
           playerYRef.current = 0;
           jumpVelocityRef.current = 0;
+          jumpCountRef.current = 0;
           isJumpingRef.current = false;
         }
 
@@ -345,11 +441,11 @@ export function HorseRallyRunner() {
         }
       }
 
-      // 2. Continuous Speed & Distance Scaling (Base 5.0 -> Max 3x = 15.0 reached over 3 minutes / 180s)
+      // 2. Speed scaling — from global dev config fetched from Supabase
       const elapsedSeconds = Math.max(0, (time - startTimeRef.current) / 1000);
-      const progressRatio = Math.min(1.0, elapsedSeconds / 180); // 0.0 at start -> 1.0 at 3 min
-      const BASE_SPEED = 16.0;
-      const MAX_SPEED = 48.0; // 3x base speed
+      const progressRatio = Math.min(1.0, elapsedSeconds / 180);
+      const BASE_SPEED = gameConfigRef.current.baseSpeed;
+      const MAX_SPEED = gameConfigRef.current.maxSpeed;
       const currentSpeed = BASE_SPEED + (MAX_SPEED - BASE_SPEED) * progressRatio;
       speedRef.current = currentSpeed;
 
@@ -416,14 +512,15 @@ export function HorseRallyRunner() {
         return;
       }
 
-      // 4. Obstacle Spawner — balanced gap for challenge without being unfair
+      // 4. Obstacle Spawner — gap & cooldown from global dev config
       const timeSinceSpawn = time - lastSpawnTimeRef.current;
       const lastObs = obstaclesRef.current[obstaclesRef.current.length - 1];
       const distFromLast = lastObs ? (WORLD_WIDTH - lastObs.x) : 999;
-      const dynamicGap = Math.max(350, 700 / (speedMultiplier ** 0.5));
+      const minGap = gameConfigRef.current.minGap;
+      const cooldown = gameConfigRef.current.spawnCooldown;
+      const dynamicGap = Math.max(cooldown, (cooldown * 2) / (speedMultiplier ** 0.5));
 
-      // 120 world-unit minimum gap — tight, action-packed spacing
-      if (distFromLast >= 120 && timeSinceSpawn > dynamicGap + Math.random() * (200 / speedMultiplier)) {
+      if (distFromLast >= minGap && timeSinceSpawn > dynamicGap + Math.random() * (200 / speedMultiplier)) {
         lastSpawnTimeRef.current = time;
 
         const types = [
@@ -476,7 +573,13 @@ export function HorseRallyRunner() {
             <FiTrendingUp className="w-4 h-4 text-amber-400" />
             ◆ ENDLESS HORSE RUNNER
           </span>
-          <h2 className="section-title">Horse Runner</h2>
+          <h2
+            onClick={handleTitleClick}
+            className="section-title cursor-pointer select-none hover:text-yellow-300 transition-colors"
+            title="Click for Developer Options"
+          >
+            Horse Runner
+          </h2>
           <p className="font-mono-custom text-sm mb-4" style={{ color: 'rgba(255,215,0,0.6)' }}>
             Choose your custom character & jump over obstacles! Tap screen or press Spacebar to jump.
           </p>
@@ -526,12 +629,9 @@ export function HorseRallyRunner() {
 
           {/* Main Interactive Canvas Area */}
           <div
+            ref={gameContainerRef}
             onClick={handleJump}
-            onTouchStart={(e) => {
-              e.preventDefault();
-              handleJump();
-            }}
-            className={`relative w-full bg-black/90 overflow-hidden select-none border-b border-amber-500/20 touch-none transition-all duration-300 ${
+            className={`relative w-full bg-black/90 overflow-hidden select-none border-b border-amber-500/20 touch-none transition-[height] duration-300 ${
               isPlaying ? 'h-[280px] sm:h-[340px] cursor-pointer' : 'min-h-[460px] sm:min-h-[500px]'
             }`}
             style={{ touchAction: 'none' }}
@@ -579,6 +679,147 @@ export function HorseRallyRunner() {
                 style={{ bottom: `${(GROUND_Y / WORLD_HEIGHT) * 100}%` }}
                 className="absolute inset-x-0 h-0.5 bg-amber-500/40 shadow-[0_0_10px_#FFA500]"
               />
+            )}
+
+            {/* Hidden Developer Settings Modal Overlay */}
+            {devPanelOpen && (
+              <div className="absolute inset-0 z-50 bg-black/95 backdrop-blur-md p-4 sm:p-6 overflow-y-auto custom-scrollbar flex flex-col font-mono-custom text-xs">
+                <div className="flex items-center justify-between border-b border-amber-500/30 pb-3 mb-4">
+                  <div className="flex items-center gap-2 font-display text-amber-400 text-sm sm:text-base font-black tracking-wider uppercase">
+                    <FiSettings className="w-4 h-4 sm:w-5 sm:h-5 text-yellow-400 animate-spin" />
+                    <span>GLOBAL DEV CONTROL PANEL</span>
+                  </div>
+                  <button
+                    onClick={() => setDevPanelOpen(false)}
+                    className="p-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 hover:bg-amber-500/20"
+                  >
+                    <FiX className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="space-y-4 max-w-lg mx-auto w-full flex-1">
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300/90 text-[11px] leading-relaxed">
+                    ⚡ <strong>Global Settings:</strong> Changes saved here are written directly to Supabase and apply to <strong>ALL PLAYERS GLOBALLY</strong> on their next game start!
+                  </div>
+
+                  {/* Base Speed */}
+                  <div className="glass-card p-3 rounded-xl border border-amber-500/20">
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="font-bold text-amber-300">1. INITIAL BASE SPEED</label>
+                      <span className="font-display font-bold text-yellow-400">{devConfig.baseSpeed} px/f</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={5}
+                      max={35}
+                      step={1}
+                      value={devConfig.baseSpeed}
+                      onChange={(e) => setDevConfig({ ...devConfig, baseSpeed: Number(e.target.value) })}
+                      className="w-full accent-amber-400 cursor-pointer"
+                    />
+                    <div className="text-[10px] text-amber-500/60 mt-1">Starting game speed (Default: 6)</div>
+                  </div>
+
+                  {/* Max Speed */}
+                  <div className="glass-card p-3 rounded-xl border border-amber-500/20">
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="font-bold text-amber-300">2. MAXIMUM PEAK SPEED (3 MIN)</label>
+                      <span className="font-display font-bold text-yellow-400">{devConfig.maxSpeed} px/f</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={15}
+                      max={80}
+                      step={1}
+                      value={devConfig.maxSpeed}
+                      onChange={(e) => setDevConfig({ ...devConfig, maxSpeed: Number(e.target.value) })}
+                      className="w-full accent-amber-400 cursor-pointer"
+                    />
+                    <div className="text-[10px] text-amber-500/60 mt-1">Top speed reached after 3 minutes (Default: 18)</div>
+                  </div>
+
+                  {/* Min Obstacle Gap */}
+                  <div className="glass-card p-3 rounded-xl border border-amber-500/20">
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="font-bold text-amber-300">3. MIN OBSTACLE DISTANCE GAP</label>
+                      <span className="font-display font-bold text-yellow-400">{devConfig.minGap} units</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={50}
+                      max={450}
+                      step={10}
+                      value={devConfig.minGap}
+                      onChange={(e) => setDevConfig({ ...devConfig, minGap: Number(e.target.value) })}
+                      className="w-full accent-amber-400 cursor-pointer"
+                    />
+                    <div className="text-[10px] text-amber-500/60 mt-1">Lower = obstacles closer together (Default: 320 - Easy & Wide)</div>
+                  </div>
+
+                  {/* Spawn Cooldown */}
+                  <div className="glass-card p-3 rounded-xl border border-amber-500/20">
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="font-bold text-amber-300">4. SPAWN COOLDOWN TIMER</label>
+                      <span className="font-display font-bold text-yellow-400">{devConfig.spawnCooldown} ms</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={150}
+                      max={1200}
+                      step={25}
+                      value={devConfig.spawnCooldown}
+                      onChange={(e) => setDevConfig({ ...devConfig, spawnCooldown: Number(e.target.value) })}
+                      className="w-full accent-amber-400 cursor-pointer"
+                    />
+                    <div className="text-[10px] text-amber-500/60 mt-1">Min time delay between obstacle spawns (Default: 800ms)</div>
+                  </div>
+
+                  {/* Multi Jump / Continuous Air Boost Feature Toggle */}
+                  <div className="glass-card p-3 rounded-xl border border-amber-500/20 flex items-center justify-between">
+                    <div>
+                      <div className="font-bold text-amber-300">5. MULTI-JUMP (CONTINUOUS BOOST)</div>
+                      <div className="text-[10px] text-amber-500/60 mt-0.5">Clicking again &amp; again keeps pushing player up (Default: OFF)</div>
+                    </div>
+
+                    <button
+                      onClick={() => setDevConfig({ ...devConfig, doubleJumpEnabled: !devConfig.doubleJumpEnabled })}
+                      className={`px-3 py-1.5 rounded-xl font-bold font-mono-custom text-xs transition-all flex items-center gap-1.5 ${
+                        devConfig.doubleJumpEnabled
+                          ? 'bg-emerald-500/25 border border-emerald-400 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.3)]'
+                          : 'bg-red-500/20 border border-red-500/40 text-red-300 opacity-80'
+                      }`}
+                    >
+                      <span>{devConfig.doubleJumpEnabled ? '🟢 ON' : '🔴 OFF'}</span>
+                    </button>
+                  </div>
+
+                  {/* Status Banner */}
+                  {devSaveMsg && (
+                    <div className={`p-3 rounded-xl text-center font-bold text-xs ${devSaveMsg.startsWith('✅') ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-300' : 'bg-red-500/20 border border-red-500/40 text-red-300'}`}>
+                      {devSaveMsg}
+                    </div>
+                  )}
+
+                  {/* Action Buttons */}
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      onClick={handleDevSave}
+                      disabled={devSaving}
+                      className="btn-gold flex-1 py-3 rounded-xl font-display font-bold text-xs flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(255,165,0,0.3)] disabled:opacity-50"
+                    >
+                      <FiSave className={`w-4 h-4 ${devSaving ? 'animate-spin' : ''}`} />
+                      <span>{devSaving ? 'SAVING TO SUPABASE...' : 'SAVE & APPLY GLOBALLY'}</span>
+                    </button>
+
+                    <button
+                      onClick={() => setDevConfig({ ...DEFAULT_HORSE_CONFIG })}
+                      className="px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 font-mono-custom text-xs hover:bg-amber-500/20"
+                    >
+                      RESET DEFAULTS
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
 
             {/* Leaderboard Modal Overlay */}

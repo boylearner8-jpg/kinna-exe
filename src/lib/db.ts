@@ -72,6 +72,14 @@ export interface HorseRunnerScore {
   created_at?: string;
 }
 
+export interface HorseRunnerConfig {
+  baseSpeed: number;       // Starting speed (default 16)
+  maxSpeed: number;        // Max speed at 3 min (default 48)
+  minGap: number;          // Min world-unit gap between obstacles (default 120)
+  spawnCooldown: number;   // Min ms between obstacle spawns (default 350)
+  doubleJumpEnabled: boolean; // Allow second mid-air jump (default false)
+}
+
 
 // ══════════════════════════════════════════════
 // GALLERY MEMORIES
@@ -718,9 +726,60 @@ export async function clearHorseRunnerLeaderboard(): Promise<void> {
   } catch {}
 
   try {
-    await supabase.from('titan_scores').delete().like('id', 'hr-%');
+    await supabase.from('titan_scores').delete().like('id', 'hr-%').neq('id', 'hr-dev-config');
   } catch (err) {
     console.warn('Failed to clear Supabase horse_runner_scores:', err);
   }
 }
 
+// ══════════════════════════════════════════════
+// HORSE RUNNER GLOBAL DEV CONFIG
+// ══════════════════════════════════════════════
+
+export const DEFAULT_HORSE_CONFIG: HorseRunnerConfig = {
+  baseSpeed: 6,
+  maxSpeed: 18,
+  minGap: 320,
+  spawnCooldown: 800,
+  doubleJumpEnabled: false,
+};
+
+export async function fetchHorseRunnerConfig(): Promise<HorseRunnerConfig> {
+  try {
+    const { data, error } = await supabase
+      .from('titan_scores')
+      .select('player_name')
+      .like('id', 'hr-cfg-%')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (error) throw error;
+    if (data && data.length > 0 && data[0].player_name) {
+      const parsed = JSON.parse(data[0].player_name) as Partial<HorseRunnerConfig>;
+      return { ...DEFAULT_HORSE_CONFIG, ...parsed };
+    }
+  } catch (err) {
+    console.warn('fetchHorseRunnerConfig failed, using defaults:', err);
+  }
+  return { ...DEFAULT_HORSE_CONFIG };
+}
+
+export async function saveHorseRunnerConfig(config: HorseRunnerConfig): Promise<void> {
+  const newId = `hr-cfg-${Date.now()}`;
+  const row = {
+    id: newId,
+    player_name: JSON.stringify(config),
+    score: -1,
+    high_score: -1,
+    wave_reached: 0,
+    created_at: new Date().toISOString(),
+  };
+  try {
+    const { error } = await supabase.from('titan_scores').insert(row);
+    if (error) throw error;
+    console.log('✅ Horse runner global config saved to Supabase:', config);
+  } catch (err) {
+    console.warn('saveHorseRunnerConfig failed:', err);
+    throw err;
+  }
+}

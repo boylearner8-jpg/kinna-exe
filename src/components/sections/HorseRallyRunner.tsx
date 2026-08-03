@@ -133,17 +133,20 @@ export function HorseRallyRunner() {
     }
   });
 
-  // Game state
+  // Game state — only triggers re-render on game phase changes, NOT during gameplay
   const [isPlaying, setIsPlaying] = useState(false);
   const [gameOver, setGameOver] = useState(false);
-  const [score, setScore] = useState(0);
-  const [highScore, setHighScore] = useState<number>(() => {
-    try {
-      return parseInt(localStorage.getItem('kinna_dino_highscore') || '0', 10);
-    } catch {
-      return 0;
-    }
-  });
+
+  // Score + highScore stored as refs during gameplay; DOM updated directly
+  const _initHiScore = (() => { try { return parseInt(localStorage.getItem('kinna_dino_highscore') || '0', 10); } catch { return 0; } })();
+  const highScoreRef = useRef<number>(_initHiScore);
+  const [displayHighScore] = useState<number>(_initHiScore);
+
+  // Direct DOM refs for score displays — bypasses React render entirely
+  const scoreElRef = useRef<HTMLSpanElement>(null);
+  const hiScoreElRef = useRef<HTMLSpanElement>(null);
+  const gameOverScoreElRef = useRef<HTMLDivElement>(null);
+  const gameOverHiElRef = useRef<HTMLDivElement>(null);
 
   // Leaderboard state
   const [showLeaderboard, setShowLeaderboard] = useState(false);
@@ -248,15 +251,21 @@ export function HorseRallyRunner() {
     hasSavedScoreRef.current = false;
     setIsPlaying(true);
     setGameOver(false);
-    setScore(0);
 
     scoreRef.current = 0;
     lastRenderedScoreRef.current = 0;
-    speedRef.current = 14.0;
+    speedRef.current = 16.0;
     playerYRef.current = 0;
     isJumpingRef.current = false;
     jumpVelocityRef.current = 0;
     obstaclesRef.current = [];
+
+    // Reset score displays directly
+    const fmt = (n: number) => n.toString().padStart(5, '0');
+    if (scoreElRef.current) scoreElRef.current.textContent = fmt(0);
+    if (hiScoreElRef.current) hiScoreElRef.current.textContent = `HI ${fmt(highScoreRef.current)}`;
+    if (gameOverScoreElRef.current) gameOverScoreElRef.current.textContent = fmt(0);
+    if (gameOverHiElRef.current) gameOverHiElRef.current.textContent = fmt(highScoreRef.current);
 
     if (playerElRef.current) {
       playerElRef.current.style.bottom = `${(GROUND_Y / WORLD_HEIGHT) * 100}%`;
@@ -291,10 +300,8 @@ export function HorseRallyRunner() {
     // Ground line
     const groundPx = ch - (GROUND_Y / WORLD_HEIGHT) * ch;
     ctx.save();
-    ctx.strokeStyle = 'rgba(255, 165, 0, 0.45)';
+    ctx.strokeStyle = 'rgba(255, 165, 0, 0.5)';
     ctx.lineWidth = 1.5;
-    ctx.shadowColor = '#FFA500';
-    ctx.shadowBlur = 8;
     ctx.beginPath();
     ctx.moveTo(0, groundPx);
     ctx.lineTo(cw, groundPx);
@@ -341,8 +348,8 @@ export function HorseRallyRunner() {
       // 2. Continuous Speed & Distance Scaling (Base 5.0 -> Max 3x = 15.0 reached over 3 minutes / 180s)
       const elapsedSeconds = Math.max(0, (time - startTimeRef.current) / 1000);
       const progressRatio = Math.min(1.0, elapsedSeconds / 180); // 0.0 at start -> 1.0 at 3 min
-      const BASE_SPEED = 14.0;
-      const MAX_SPEED = 42.0; // 3x base speed
+      const BASE_SPEED = 16.0;
+      const MAX_SPEED = 48.0; // 3x base speed
       const currentSpeed = BASE_SPEED + (MAX_SPEED - BASE_SPEED) * progressRatio;
       speedRef.current = currentSpeed;
 
@@ -350,16 +357,16 @@ export function HorseRallyRunner() {
       scoreRef.current += 0.28 * speedMultiplier;
       const currentScore = Math.floor(scoreRef.current);
 
-      // Throttled score update to eliminate React re-render lag on mobile
+      // Update score display directly on DOM — zero React re-render
       if (currentScore !== lastRenderedScoreRef.current) {
         lastRenderedScoreRef.current = currentScore;
-        setScore(currentScore);
+        const fmt = (n: number) => n.toString().padStart(5, '0');
+        if (scoreElRef.current) scoreElRef.current.textContent = fmt(currentScore);
 
-        if (currentScore > highScore) {
-          setHighScore(currentScore);
-          try {
-            localStorage.setItem('kinna_dino_highscore', currentScore.toString());
-          } catch {}
+        if (currentScore > highScoreRef.current) {
+          highScoreRef.current = currentScore;
+          if (hiScoreElRef.current) hiScoreElRef.current.textContent = `HI ${fmt(currentScore)}`;
+          try { localStorage.setItem('kinna_dino_highscore', currentScore.toString()); } catch {}
         }
       }
 
@@ -390,28 +397,33 @@ export function HorseRallyRunner() {
       // Handle Collision / Game Over
       if (hasCollision) {
         playBoom();
+        // Update game-over overlays before state flip
+        const finalScore = Math.floor(scoreRef.current);
+        const fmt = (n: number) => n.toString().padStart(5, '0');
+        if (gameOverScoreElRef.current) gameOverScoreElRef.current.textContent = fmt(finalScore);
+        if (gameOverHiElRef.current) gameOverHiElRef.current.textContent = fmt(highScoreRef.current);
+
         setGameOver(true);
         setIsPlaying(false);
 
-        const currentFinalScore = Math.floor(scoreRef.current);
         if (!hasSavedScoreRef.current) {
           hasSavedScoreRef.current = true;
           const nameToSave = playerName.trim() || 'Kinna Runner';
-          saveHorseRunnerScore(nameToSave, currentFinalScore, activeCharacter.name).then(() => {
+          saveHorseRunnerScore(nameToSave, finalScore, activeCharacter.name).then(() => {
             loadLeaderboard();
           });
         }
         return;
       }
 
-      // 4. Obstacle Spawner (Strict 380px Minimum Distance Gap for Mobile Comfort)
+      // 4. Obstacle Spawner — balanced gap for challenge without being unfair
       const timeSinceSpawn = time - lastSpawnTimeRef.current;
       const lastObs = obstaclesRef.current[obstaclesRef.current.length - 1];
       const distFromLast = lastObs ? (WORLD_WIDTH - lastObs.x) : 999;
-      const dynamicGap = Math.max(1000, 1800 / (speedMultiplier ** 0.5));
+      const dynamicGap = Math.max(350, 700 / (speedMultiplier ** 0.5));
 
-      // Guarantees at least 380 world-units (almost half the screen) between consecutive obstacles!
-      if (distFromLast >= 380 && timeSinceSpawn > dynamicGap + Math.random() * (500 / speedMultiplier)) {
+      // 120 world-unit minimum gap — tight, action-packed spacing
+      if (distFromLast >= 120 && timeSinceSpawn > dynamicGap + Math.random() * (200 / speedMultiplier)) {
         lastSpawnTimeRef.current = time;
 
         const types = [
@@ -442,10 +454,10 @@ export function HorseRallyRunner() {
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [isPlaying, gameOver, highScore]);
+  }, [isPlaying, gameOver]);
 
   // Format Dino 5-digit Score
-  const formatDinoScore = (num: number) => num.toString().padStart(5, '0');
+  const fmt = (n: number) => n.toString().padStart(5, '0');
 
   return (
     <section id="horse-runner" className="relative py-24 px-4 overflow-hidden grid-bg">
@@ -488,13 +500,13 @@ export function HorseRallyRunner() {
             </div>
 
             <div className="flex items-center gap-2 sm:gap-3 text-amber-300 font-bold shrink-0">
-              {/* Score Ticker Display (HI 01200  00450) */}
+              {/* Score Ticker — updated via direct DOM ref, zero React render */}
               <div className="font-mono-custom text-xs sm:text-sm font-bold text-amber-300 tracking-wider whitespace-nowrap tabular-nums">
-                <span className="text-amber-500/80 mr-1.5 sm:mr-3 text-[10px] sm:text-xs">
-                  HI {formatDinoScore(highScore)}
+                <span ref={hiScoreElRef} className="text-amber-500/80 mr-1.5 sm:mr-3 text-[10px] sm:text-xs">
+                  HI {fmt(displayHighScore)}
                 </span>
-                <span className="text-yellow-400 font-display">
-                  {formatDinoScore(score)}
+                <span ref={scoreElRef} className="text-yellow-400 font-display">
+                  {fmt(0)}
                 </span>
               </div>
 
@@ -524,11 +536,11 @@ export function HorseRallyRunner() {
             }`}
             style={{ touchAction: 'none' }}
           >
-            {/* Canvas layer: ground line + obstacles — pure GPU, zero React overhead */}
+            {/* Canvas layer: ground + obstacles — pure GPU, zero React overhead */}
             <canvas
               ref={canvasRef}
               className="absolute inset-0 w-full h-full pointer-events-none z-10"
-              style={{ display: isPlaying ? 'block' : 'none' }}
+              style={{ display: isPlaying ? 'block' : 'none', transform: 'translateZ(0)' }}
             />
 
             {/* Selected Character Sprite (Direct GPU ref — bottom updated per frame via ref) */}
@@ -546,6 +558,7 @@ export function HorseRallyRunner() {
                 alignItems: 'flex-end',
                 justifyContent: 'center',
                 willChange: 'bottom',
+                transform: 'translateZ(0)',
               }}
             >
               <img
@@ -662,8 +675,8 @@ export function HorseRallyRunner() {
                       <div className="text-[9px] sm:text-[10px] text-amber-400/80 font-bold uppercase tracking-wider">
                         FINAL SCORE
                       </div>
-                      <div className="font-display font-black text-xl sm:text-3xl text-yellow-400">
-                        {formatDinoScore(score)}
+                      <div ref={gameOverScoreElRef} className="font-display font-black text-xl sm:text-3xl text-yellow-400">
+                        {fmt(0)}
                       </div>
                     </div>
                     <div className="w-px h-8 bg-amber-500/30" />
@@ -671,8 +684,8 @@ export function HorseRallyRunner() {
                       <div className="text-[9px] sm:text-[10px] text-amber-400/80 font-bold uppercase tracking-wider">
                         HIGH SCORE
                       </div>
-                      <div className="font-display font-bold text-lg sm:text-2xl text-amber-300">
-                        {formatDinoScore(highScore)}
+                      <div ref={gameOverHiElRef} className="font-display font-bold text-lg sm:text-2xl text-amber-300">
+                        {fmt(displayHighScore)}
                       </div>
                     </div>
                   </div>

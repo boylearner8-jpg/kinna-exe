@@ -178,9 +178,28 @@ export function HorseRallyRunner() {
     }
   };
 
-  // Smooth Render States & Direct GPU Refs
-  const [renderObstacles, setRenderObstacles] = useState<Obstacle[]>([]);
+  // Direct GPU refs — zero React state during gameplay
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const playerElRef = useRef<HTMLDivElement>(null);
+
+  // Keep canvas pixel size in sync with its CSS size (critical for crisp mobile rendering)
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        const w = Math.round(width);
+        const h = Math.round(height);
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w;
+          canvas.height = h;
+        }
+      }
+    });
+    ro.observe(canvas);
+    return () => ro.disconnect();
+  }, []);
 
   // Engine Refs (runs inside 60FPS requestAnimationFrame)
   const animFrameRef = useRef<number | null>(null);
@@ -226,27 +245,71 @@ export function HorseRallyRunner() {
   // Start Game Reset
   const startGame = () => {
     playClick();
+    hasSavedScoreRef.current = false;
     setIsPlaying(true);
     setGameOver(false);
     setScore(0);
 
     scoreRef.current = 0;
     lastRenderedScoreRef.current = 0;
-    speedRef.current = 5.0;
+    speedRef.current = 14.0;
     playerYRef.current = 0;
     isJumpingRef.current = false;
     jumpVelocityRef.current = 0;
     obstaclesRef.current = [];
-    setRenderObstacles([]);
 
     if (playerElRef.current) {
       playerElRef.current.style.bottom = `${(GROUND_Y / WORLD_HEIGHT) * 100}%`;
+    }
+
+    // Clear canvas immediately
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
 
     const now = performance.now();
     lastTimeRef.current = now;
     lastSpawnTimeRef.current = now;
     startTimeRef.current = now;
+  };
+
+  // Canvas draw helper — called every frame, zero React overhead
+  const drawCanvas = (obstacles: Obstacle[]) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const cw = canvas.width;
+    const ch = canvas.height;
+
+    // Clear
+    ctx.clearRect(0, 0, cw, ch);
+
+    // Ground line
+    const groundPx = ch - (GROUND_Y / WORLD_HEIGHT) * ch;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255, 165, 0, 0.45)';
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = '#FFA500';
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(0, groundPx);
+    ctx.lineTo(cw, groundPx);
+    ctx.stroke();
+    ctx.restore();
+
+    // Obstacles as emoji text on canvas
+    obstacles.forEach((obs) => {
+      const x = (obs.x / WORLD_WIDTH) * cw;
+      const y = groundPx - (obs.height / WORLD_HEIGHT) * ch;
+      const fontSize = Math.round((obs.height / WORLD_HEIGHT) * ch * 1.1);
+      ctx.font = `${fontSize}px serif`;
+      ctx.textBaseline = 'top';
+      ctx.fillText(obs.icon, x, y);
+    });
   };
 
   // Main 60FPS GPU Game Engine Loop
@@ -278,8 +341,8 @@ export function HorseRallyRunner() {
       // 2. Continuous Speed & Distance Scaling (Base 5.0 -> Max 3x = 15.0 reached over 3 minutes / 180s)
       const elapsedSeconds = Math.max(0, (time - startTimeRef.current) / 1000);
       const progressRatio = Math.min(1.0, elapsedSeconds / 180); // 0.0 at start -> 1.0 at 3 min
-      const BASE_SPEED = 5.0;
-      const MAX_SPEED = 15.0; // 3x base speed
+      const BASE_SPEED = 14.0;
+      const MAX_SPEED = 42.0; // 3x base speed
       const currentSpeed = BASE_SPEED + (MAX_SPEED - BASE_SPEED) * progressRatio;
       speedRef.current = currentSpeed;
 
@@ -368,8 +431,8 @@ export function HorseRallyRunner() {
         });
       }
 
-      // Sync obstacle render positions
-      setRenderObstacles([...obstaclesRef.current]);
+      // Draw directly to canvas — zero React state, zero reconciliation, pure GPU
+      drawCanvas(obstaclesRef.current);
 
       animFrameRef.current = requestAnimationFrame(gameLoop);
     };
@@ -449,7 +512,7 @@ export function HorseRallyRunner() {
             </div>
           </div>
 
-          {/* Main Interactive Canvas Area (Synchronized World Coordinates) */}
+          {/* Main Interactive Canvas Area */}
           <div
             onClick={handleJump}
             onTouchStart={(e) => {
@@ -461,7 +524,14 @@ export function HorseRallyRunner() {
             }`}
             style={{ touchAction: 'none' }}
           >
-            {/* Selected Character Sprite (Direct GPU Ref for 60FPS Mobile Smoothness) */}
+            {/* Canvas layer: ground line + obstacles — pure GPU, zero React overhead */}
+            <canvas
+              ref={canvasRef}
+              className="absolute inset-0 w-full h-full pointer-events-none z-10"
+              style={{ display: isPlaying ? 'block' : 'none' }}
+            />
+
+            {/* Selected Character Sprite (Direct GPU ref — bottom updated per frame via ref) */}
             <div
               ref={playerElRef}
               style={{
@@ -469,8 +539,14 @@ export function HorseRallyRunner() {
                 bottom: `${(GROUND_Y / WORLD_HEIGHT) * 100}%`,
                 width: `${(PLAYER_WIDTH / WORLD_WIDTH) * 100}%`,
                 height: `${(PLAYER_HEIGHT / WORLD_HEIGHT) * 100}%`,
+                position: 'absolute',
+                zIndex: 20,
+                pointerEvents: 'none',
+                display: 'flex',
+                alignItems: 'flex-end',
+                justifyContent: 'center',
+                willChange: 'bottom',
               }}
-              className="absolute z-20 pointer-events-none drop-shadow-[0_0_12px_rgba(255,215,0,0.4)] flex items-end justify-center"
             >
               <img
                 src={activeCharacter.image}
@@ -484,27 +560,13 @@ export function HorseRallyRunner() {
               />
             </div>
 
-            {/* Highway Ground Line (Synchronized % World Position) */}
-            <div
-              style={{ bottom: `${(GROUND_Y / WORLD_HEIGHT) * 100}%` }}
-              className="absolute inset-x-0 h-0.5 bg-amber-500/40 shadow-[0_0_10px_#FFA500]"
-            />
-
-            {/* Dynamic Obstacles (Synchronized % World Position) */}
-            {renderObstacles.map((obs) => (
+            {/* Static ground line shown on menu/gameover screens only */}
+            {!isPlaying && (
               <div
-                key={obs.id}
-                style={{
-                  left: `${(obs.x / WORLD_WIDTH) * 100}%`,
-                  bottom: `${(GROUND_Y / WORLD_HEIGHT) * 100}%`,
-                  width: `${(obs.width / WORLD_WIDTH) * 100}%`,
-                  height: `${(obs.height / WORLD_HEIGHT) * 100}%`,
-                }}
-                className="absolute z-10 flex items-center justify-center font-display text-3xl sm:text-4xl drop-shadow-[0_0_8px_rgba(255,165,0,0.4)] pointer-events-none"
-              >
-                {obs.icon}
-              </div>
-            ))}
+                style={{ bottom: `${(GROUND_Y / WORLD_HEIGHT) * 100}%` }}
+                className="absolute inset-x-0 h-0.5 bg-amber-500/40 shadow-[0_0_10px_#FFA500]"
+              />
+            )}
 
             {/* Leaderboard Modal Overlay */}
             {showLeaderboard && (

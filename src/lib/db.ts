@@ -616,14 +616,14 @@ export async function clearTitanLeaderboard(): Promise<void> {
   } catch {}
 
   try {
-    await supabase.from('titan_scores').delete().neq('id', '0');
+    await supabase.from('titan_scores').delete().like('id', 'ts-%');
   } catch (err) {
     console.warn('Failed to clear Supabase titan_scores:', err);
   }
 }
 
 // ══════════════════════════════════════════════
-// HORSE RUNNER LEADERBOARD
+// HORSE RUNNER LEADERBOARD (GLOBAL SUPABASE SYNC)
 // ══════════════════════════════════════════════
 
 const LOCAL_HORSE_LEADERBOARD_KEY = 'kinna_horse_leaderboard_v1';
@@ -631,14 +631,22 @@ const LOCAL_HORSE_LEADERBOARD_KEY = 'kinna_horse_leaderboard_v1';
 export async function fetchHorseRunnerLeaderboard(): Promise<HorseRunnerScore[]> {
   try {
     const { data, error } = await supabase
-      .from('horse_runner_scores')
+      .from('titan_scores')
       .select('*')
+      .like('id', 'hr-%')
       .order('high_score', { ascending: false })
       .limit(20);
 
     if (error) throw error;
     if (data && data.length > 0) {
-      return data;
+      return data.map((d: any) => ({
+        id: d.id,
+        player_name: d.player_name,
+        score: d.score,
+        high_score: d.high_score,
+        character_name: d.wave_reached ? `Character #${d.wave_reached}` : 'Horse Rider',
+        created_at: d.created_at,
+      }));
     }
   } catch (err) {
     console.warn('Supabase fetchHorseRunnerLeaderboard failed, falling back to localStorage:', err);
@@ -660,25 +668,30 @@ export async function saveHorseRunnerScore(
   finalScore: number,
   characterName?: string
 ): Promise<void> {
+  const nameWithChar = characterName
+    ? `${playerName.trim() || 'Kinna Runner'} (${characterName})`
+    : (playerName.trim() || 'Kinna Runner');
+
   const newEntry: HorseRunnerScore = {
     id: `hr-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-    player_name: playerName.trim() || 'Kinna Runner',
+    player_name: nameWithChar,
     score: finalScore,
     high_score: finalScore,
-    character_name: characterName || 'Motu Madhur & Aryan',
+    character_name: characterName || 'Horse Rider',
     created_at: new Date().toISOString(),
   };
 
-  // 1. Try to save to Supabase
+  // 1. Save to Supabase (titan_scores table)
   try {
-    await supabase.from('horse_runner_scores').insert({
+    await supabase.from('titan_scores').insert({
       id: newEntry.id,
       player_name: newEntry.player_name,
       score: newEntry.score,
       high_score: newEntry.high_score,
-      character_name: newEntry.character_name,
+      wave_reached: 1,
       created_at: newEntry.created_at,
     });
+    console.log('✅ Horse runner score saved to Supabase globally:', newEntry);
   } catch (err) {
     console.warn('Supabase saveHorseRunnerScore failed:', err);
   }
@@ -705,7 +718,7 @@ export async function clearHorseRunnerLeaderboard(): Promise<void> {
   } catch {}
 
   try {
-    await supabase.from('horse_runner_scores').delete().neq('id', '0');
+    await supabase.from('titan_scores').delete().like('id', 'hr-%');
   } catch (err) {
     console.warn('Failed to clear Supabase horse_runner_scores:', err);
   }

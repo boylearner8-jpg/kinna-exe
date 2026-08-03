@@ -178,16 +178,17 @@ export function HorseRallyRunner() {
     }
   };
 
-  // Smooth Render States
-  const [playerY, setPlayerY] = useState(0); // Height from ground in world px
+  // Smooth Render States & Direct GPU Refs
   const [renderObstacles, setRenderObstacles] = useState<Obstacle[]>([]);
+  const playerElRef = useRef<HTMLDivElement>(null);
 
   // Engine Refs (runs inside 60FPS requestAnimationFrame)
   const animFrameRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(0);
 
   const scoreRef = useRef(0);
-  const speedRef = useRef(5.0); // World units per frame speed
+  const lastRenderedScoreRef = useRef(-1);
+  const speedRef = useRef(5.0); // Smooth base speed
   const playerYRef = useRef(0);
   const isJumpingRef = useRef(false);
   const jumpVelocityRef = useRef(0);
@@ -202,7 +203,7 @@ export function HorseRallyRunner() {
     if (!isJumpingRef.current && playerYRef.current <= 0) {
       playClick();
       isJumpingRef.current = true;
-      jumpVelocityRef.current = 11.6; // Slightly higher, smooth floaty jump
+      jumpVelocityRef.current = 11.5; // Smooth responsive jump
     }
   };
 
@@ -228,15 +229,19 @@ export function HorseRallyRunner() {
     setIsPlaying(true);
     setGameOver(false);
     setScore(0);
-    setPlayerY(0);
 
     scoreRef.current = 0;
-    speedRef.current = 6.8;
+    lastRenderedScoreRef.current = 0;
+    speedRef.current = 5.0;
     playerYRef.current = 0;
     isJumpingRef.current = false;
     jumpVelocityRef.current = 0;
     obstaclesRef.current = [];
     setRenderObstacles([]);
+
+    if (playerElRef.current) {
+      playerElRef.current.style.bottom = `${(GROUND_Y / WORLD_HEIGHT) * 100}%`;
+    }
 
     const now = performance.now();
     lastTimeRef.current = now;
@@ -244,7 +249,7 @@ export function HorseRallyRunner() {
     startTimeRef.current = now;
   };
 
-  // Main 60FPS Game Engine Loop
+  // Main 60FPS GPU Game Engine Loop
   useEffect(() => {
     if (!isPlaying || gameOver) {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -254,7 +259,7 @@ export function HorseRallyRunner() {
     const gameLoop = (time: number) => {
       lastTimeRef.current = time;
 
-      // 1. Player Jump & Gravity Physics
+      // 1. Player Jump & Gravity Physics (Direct GPU DOM update for 60FPS mobile smoothness)
       if (isJumpingRef.current || playerYRef.current > 0) {
         playerYRef.current += jumpVelocityRef.current;
         jumpVelocityRef.current -= 0.44; // Crisp responsive gravity pull
@@ -264,27 +269,35 @@ export function HorseRallyRunner() {
           jumpVelocityRef.current = 0;
           isJumpingRef.current = false;
         }
-        setPlayerY(playerYRef.current);
+
+        if (playerElRef.current) {
+          playerElRef.current.style.bottom = `${((GROUND_Y + playerYRef.current) / WORLD_HEIGHT) * 100}%`;
+        }
       }
 
-      // 2. Continuous Speed & Distance Scaling (Base 6.8 -> Max 3x = 20.4 reached over 3 minutes / 180s)
+      // 2. Continuous Speed & Distance Scaling (Base 5.0 -> Max 3x = 15.0 reached over 3 minutes / 180s)
       const elapsedSeconds = Math.max(0, (time - startTimeRef.current) / 1000);
       const progressRatio = Math.min(1.0, elapsedSeconds / 180); // 0.0 at start -> 1.0 at 3 min
-      const BASE_SPEED = 6.8;
-      const MAX_SPEED = 20.4; // Exact 3x initial base speed
+      const BASE_SPEED = 5.0;
+      const MAX_SPEED = 15.0; // 3x base speed
       const currentSpeed = BASE_SPEED + (MAX_SPEED - BASE_SPEED) * progressRatio;
       speedRef.current = currentSpeed;
 
       const speedMultiplier = currentSpeed / BASE_SPEED;
       scoreRef.current += 0.28 * speedMultiplier;
       const currentScore = Math.floor(scoreRef.current);
-      setScore(currentScore);
 
-      if (currentScore > highScore) {
-        setHighScore(currentScore);
-        try {
-          localStorage.setItem('kinna_dino_highscore', currentScore.toString());
-        } catch {}
+      // Throttled score update to eliminate React re-render lag on mobile
+      if (currentScore !== lastRenderedScoreRef.current) {
+        lastRenderedScoreRef.current = currentScore;
+        setScore(currentScore);
+
+        if (currentScore > highScore) {
+          setHighScore(currentScore);
+          try {
+            localStorage.setItem('kinna_dino_highscore', currentScore.toString());
+          } catch {}
+        }
       }
 
       // 3. Move & Filter Obstacles in Unified World Units
@@ -328,11 +341,14 @@ export function HorseRallyRunner() {
         return;
       }
 
-      // 4. Obstacle Spawner (Synchronized with 3x Speed Scaling)
+      // 4. Obstacle Spawner (Strict 380px Minimum Distance Gap for Mobile Comfort)
       const timeSinceSpawn = time - lastSpawnTimeRef.current;
-      const dynamicGap = Math.max(480, 1300 / speedMultiplier);
+      const lastObs = obstaclesRef.current[obstaclesRef.current.length - 1];
+      const distFromLast = lastObs ? (WORLD_WIDTH - lastObs.x) : 999;
+      const dynamicGap = Math.max(1000, 1800 / (speedMultiplier ** 0.5));
 
-      if (timeSinceSpawn > dynamicGap + Math.random() * (600 / speedMultiplier)) {
+      // Guarantees at least 380 world-units (almost half the screen) between consecutive obstacles!
+      if (distFromLast >= 380 && timeSinceSpawn > dynamicGap + Math.random() * (500 / speedMultiplier)) {
         lastSpawnTimeRef.current = time;
 
         const types = [
@@ -352,7 +368,7 @@ export function HorseRallyRunner() {
         });
       }
 
-      // Sync render state
+      // Sync obstacle render positions
       setRenderObstacles([...obstaclesRef.current]);
 
       animFrameRef.current = requestAnimationFrame(gameLoop);
@@ -445,11 +461,12 @@ export function HorseRallyRunner() {
             }`}
             style={{ touchAction: 'none' }}
           >
-            {/* Selected Character Sprite (Synchronized % World Position - Grounded on Highway) */}
+            {/* Selected Character Sprite (Direct GPU Ref for 60FPS Mobile Smoothness) */}
             <div
+              ref={playerElRef}
               style={{
                 left: `${(PLAYER_X / WORLD_WIDTH) * 100}%`,
-                bottom: `${((GROUND_Y + playerY) / WORLD_HEIGHT) * 100}%`,
+                bottom: `${(GROUND_Y / WORLD_HEIGHT) * 100}%`,
                 width: `${(PLAYER_WIDTH / WORLD_WIDTH) * 100}%`,
                 height: `${(PLAYER_HEIGHT / WORLD_HEIGHT) * 100}%`,
               }}

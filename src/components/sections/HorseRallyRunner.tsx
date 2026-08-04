@@ -22,6 +22,8 @@ import {
   FiTrash2,
   FiSettings,
   FiSave,
+  FiChevronLeft,
+  FiChevronRight,
 } from 'react-icons/fi';
 
 // Unified World Dimensions
@@ -125,6 +127,25 @@ export function HorseRallyRunner() {
 
   const activeCharacter =
     PLAYABLE_CHARACTERS.find((c) => c.id === selectedCharId) || PLAYABLE_CHARACTERS[0];
+
+  // Character cycling helpers for arrow buttons
+  const handleCharPrev = () => {
+    const idx = PLAYABLE_CHARACTERS.findIndex((c) => c.id === selectedCharId);
+    const prev = (idx - 1 + PLAYABLE_CHARACTERS.length) % PLAYABLE_CHARACTERS.length;
+    const newId = PLAYABLE_CHARACTERS[prev].id;
+    setSelectedCharId(newId);
+    try { localStorage.setItem('kinna_dino_character', newId); } catch {}
+    playClick();
+  };
+
+  const handleCharNext = () => {
+    const idx = PLAYABLE_CHARACTERS.findIndex((c) => c.id === selectedCharId);
+    const next = (idx + 1) % PLAYABLE_CHARACTERS.length;
+    const newId = PLAYABLE_CHARACTERS[next].id;
+    setSelectedCharId(newId);
+    try { localStorage.setItem('kinna_dino_character', newId); } catch {}
+    playClick();
+  };
 
   // Global dev config (fetched from Supabase on mount, applies to ALL players)
   const gameConfigRef = useRef<HorseRunnerConfig>({ ...DEFAULT_HORSE_CONFIG });
@@ -264,19 +285,27 @@ export function HorseRallyRunner() {
     return () => ro.disconnect();
   }, []);
 
-  // Native non-passive touch listener to eliminate mobile touch input latency
+  // Native non-passive touch listener — ONLY active during gameplay
+  // When not playing (menu, game over, leaderboard), touch passes through normally
+  const isPlayingRef = useRef(false);
+  const gameOverRef = useRef(false);
+  isPlayingRef.current = isPlaying;
+  gameOverRef.current = gameOver;
+
   useEffect(() => {
     const el = gameContainerRef.current;
     if (!el) return;
 
     const onTouchStart = (e: TouchEvent) => {
+      // Only intercept touches during active gameplay
+      if (!isPlayingRef.current || gameOverRef.current) return;
       e.preventDefault();
-      handleJump();
+      handleJumpRef.current();
     };
 
     el.addEventListener('touchstart', onTouchStart, { passive: false });
     return () => el.removeEventListener('touchstart', onTouchStart);
-  }, [isPlaying, gameOver]);
+  }, []);
 
   // Engine Refs (runs inside 60FPS requestAnimationFrame)
   const animFrameRef = useRef<number | null>(null);
@@ -296,7 +325,7 @@ export function HorseRallyRunner() {
 
   // Jump Action (Ground Jump & Continuous Air Boost when Multi-Jump Feature is ON)
   const handleJump = () => {
-    if (gameOver || !isPlaying) return;
+    if (gameOverRef.current || !isPlayingRef.current) return;
 
     // Ground Jump (Jump 1)
     if (!isJumpingRef.current && playerYRef.current <= 0) {
@@ -315,6 +344,10 @@ export function HorseRallyRunner() {
       jumpVelocityRef.current = 10.5; // Upward air boost on every tap
     }
   };
+
+  // Stable ref so the native touch listener always calls the latest handleJump
+  const handleJumpRef = useRef(handleJump);
+  handleJumpRef.current = handleJump;
 
   // Keyboard Event Listener
   useEffect(() => {
@@ -896,13 +929,29 @@ export function HorseRallyRunner() {
 
                 {/* Center Content: Avatar + GAME OVER + Big Score Box + Action Buttons */}
                 <div className="flex flex-col items-center justify-center my-auto w-full max-w-sm sm:max-w-md">
-                  {/* Selected Character Cutout — Big & Direct (No Circular Frame) */}
-                  <div className="w-28 h-28 sm:w-40 sm:h-40 mb-2 flex items-center justify-center relative shrink-0">
-                    <img
-                      src={activeCharacter.image}
-                      alt={activeCharacter.name}
-                      className="w-full h-full object-contain filter drop-shadow-[0_0_25px_rgba(255,0,64,0.7)]"
-                    />
+                  {/* Character Preview with Left/Right Arrows on Game Over */}
+                  <div className="flex items-center gap-10 sm:gap-16 mb-2">
+                    <button
+                      onClick={handleCharPrev}
+                      className="p-2 sm:p-2.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 hover:bg-amber-500/25 active:scale-90 transition-all shrink-0"
+                    >
+                      <FiChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </button>
+
+                    <div className="w-28 h-28 sm:w-40 sm:h-40 flex items-center justify-center relative shrink-0">
+                      <img
+                        src={activeCharacter.image}
+                        alt={activeCharacter.name}
+                        className="w-full h-full object-contain filter drop-shadow-[0_0_25px_rgba(255,0,64,0.7)]"
+                      />
+                    </div>
+
+                    <button
+                      onClick={handleCharNext}
+                      className="p-2 sm:p-2.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 hover:bg-amber-500/25 active:scale-90 transition-all shrink-0"
+                    >
+                      <FiChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </button>
                   </div>
 
                   {/* GAME OVER Title */}
@@ -1066,15 +1115,31 @@ export function HorseRallyRunner() {
             {/* Initial Start Screen Overlay with Direct Scrollable Character Menu */}
             {!isPlaying && !gameOver && (
               <div className="absolute inset-0 flex flex-col items-center justify-between bg-black/90 backdrop-blur-md z-30 p-3 sm:p-4 text-center overflow-hidden">
-                {/* Header & Character Preview */}
+                {/* Header & Character Preview with Arrow Navigation */}
                 <div className="flex flex-col items-center my-auto">
-                  {/* Selected Character Cutout — Big & Direct (No Circular Frame) */}
-                  <div className="w-28 h-28 sm:w-40 sm:h-40 mb-2 flex items-center justify-center relative shrink-0">
-                    <img
-                      src={activeCharacter.image}
-                      alt={activeCharacter.name}
-                      className="w-full h-full object-contain filter drop-shadow-[0_0_25px_rgba(255,215,0,0.7)]"
-                    />
+                  {/* Character Preview with Left/Right Arrows */}
+                  <div className="flex items-center gap-10 sm:gap-16 mb-2">
+                    <button
+                      onClick={handleCharPrev}
+                      className="p-2 sm:p-2.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 hover:bg-amber-500/25 active:scale-90 transition-all shrink-0"
+                    >
+                      <FiChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </button>
+
+                    <div className="w-28 h-28 sm:w-40 sm:h-40 flex items-center justify-center relative shrink-0">
+                      <img
+                        src={activeCharacter.image}
+                        alt={activeCharacter.name}
+                        className="w-full h-full object-contain filter drop-shadow-[0_0_25px_rgba(255,215,0,0.7)]"
+                      />
+                    </div>
+
+                    <button
+                      onClick={handleCharNext}
+                      className="p-2 sm:p-2.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 hover:bg-amber-500/25 active:scale-90 transition-all shrink-0"
+                    >
+                      <FiChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </button>
                   </div>
                   <h3 className="font-display font-black text-lg sm:text-xl text-amber-400 mb-0.5 tracking-wider">
                     HORSE RUNNER

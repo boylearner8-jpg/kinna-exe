@@ -783,3 +783,115 @@ export async function saveHorseRunnerConfig(config: HorseRunnerConfig): Promise<
     throw err;
   }
 }
+
+// ══════════════════════════════════════════════
+// SPACE SHOOTER LEADERBOARD
+// ══════════════════════════════════════════════
+
+export interface SpaceShooterScore {
+  id: string;
+  player_name: string;
+  score: number;
+  high_score: number;
+  wave_reached: number;
+  character_name?: string;
+  created_at?: string;
+}
+
+const LOCAL_SPACE_LEADERBOARD_KEY = 'kinna_space_leaderboard_v1';
+
+export async function fetchSpaceShooterLeaderboard(): Promise<SpaceShooterScore[]> {
+  try {
+    const { data, error } = await supabase
+      .from('titan_scores')
+      .select('*')
+      .like('id', 'ss-%')
+      .order('high_score', { ascending: false })
+      .limit(20);
+
+    if (error) throw error;
+    if (data && data.length > 0) {
+      return data.map((d: any) => ({
+        id: d.id,
+        player_name: d.player_name,
+        score: d.score,
+        high_score: d.high_score,
+        wave_reached: d.wave_reached || 1,
+        character_name: d.player_name.includes('(') ? d.player_name.split('(')[1]?.replace(')', '') : 'Space Pilot',
+        created_at: d.created_at,
+      }));
+    }
+  } catch (err) {
+    console.warn('Supabase fetchSpaceShooterLeaderboard failed, falling back to localStorage:', err);
+  }
+
+  try {
+    const raw = localStorage.getItem(LOCAL_SPACE_LEADERBOARD_KEY);
+    if (raw) {
+      return JSON.parse(raw) as SpaceShooterScore[];
+    }
+  } catch {}
+
+  return [];
+}
+
+export async function saveSpaceShooterScore(
+  playerName: string,
+  finalScore: number,
+  waveReached: number,
+  characterName?: string
+): Promise<void> {
+  const nameWithChar = characterName
+    ? `${playerName.trim() || 'Space Pilot'} (${characterName})`
+    : (playerName.trim() || 'Space Pilot');
+
+  const newEntry: SpaceShooterScore = {
+    id: `ss-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    player_name: nameWithChar,
+    score: finalScore,
+    high_score: finalScore,
+    wave_reached: waveReached,
+    character_name: characterName || 'Space Pilot',
+    created_at: new Date().toISOString(),
+  };
+
+  try {
+    await supabase.from('titan_scores').insert({
+      id: newEntry.id,
+      player_name: newEntry.player_name,
+      score: newEntry.score,
+      high_score: newEntry.high_score,
+      wave_reached: newEntry.wave_reached,
+      created_at: newEntry.created_at,
+    });
+    console.log('✅ Space shooter score saved to Supabase globally:', newEntry);
+  } catch (err) {
+    console.warn('Supabase saveSpaceShooterScore failed:', err);
+  }
+
+  try {
+    const existing = await fetchSpaceShooterLeaderboard();
+    const isDuplicate = existing.some(
+      (e) => e.player_name === newEntry.player_name && e.high_score === newEntry.high_score
+    );
+    if (!isDuplicate) {
+      const updated = [...existing, newEntry]
+        .sort((a, b) => b.high_score - a.high_score)
+        .slice(0, 50);
+      localStorage.setItem(LOCAL_SPACE_LEADERBOARD_KEY, JSON.stringify(updated));
+    }
+  } catch {}
+}
+
+export async function clearSpaceShooterLeaderboard(): Promise<void> {
+  try {
+    localStorage.removeItem(LOCAL_SPACE_LEADERBOARD_KEY);
+    localStorage.removeItem('kinna_space_highscore');
+  } catch {}
+
+  try {
+    await supabase.from('titan_scores').delete().like('id', 'ss-%');
+  } catch (err) {
+    console.warn('Failed to clear Supabase space_shooter_scores:', err);
+  }
+}

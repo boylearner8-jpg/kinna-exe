@@ -102,6 +102,13 @@ export const PLAYABLE_CHARACTERS: PlayableCharacter[] = [
     image: '/advocate_bo_cutout.png',
     scale: 1.0,
   },
+  {
+    id: 'sneha-anhoni',
+    name: 'Sneha Anhoni',
+    title: 'Unholy Creature',
+    image: '/sneha_anhoni_cutout.png',
+    scale: 1.0,
+  },
 ];
 
 interface Obstacle {
@@ -204,14 +211,9 @@ export function HorseRallyRunner() {
   // Prevent double saving score flag
   const hasSavedScoreRef = useRef(false);
 
-  // Player Name State
-  const [playerName, setPlayerName] = useState<string>(() => {
-    try {
-      return localStorage.getItem('kinna_runner_player_name') || '';
-    } catch {
-      return '';
-    }
-  });
+  // Player Name State — default empty, required to play!
+  const [playerName, setPlayerName] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
 
   // Game state — only triggers re-render on game phase changes, NOT during gameplay
   const [isPlaying, setIsPlaying] = useState(false);
@@ -372,6 +374,15 @@ export function HorseRallyRunner() {
 
   // Start Game Reset
   const startGame = () => {
+    if (!playerName.trim()) {
+      setNameError('⚠️ PLEASE ENTER RUNNER NAME TO START!');
+      return;
+    }
+    setNameError(null);
+    try {
+      localStorage.setItem('kinna_runner_player_name', playerName.trim());
+    } catch {}
+
     playClick();
     hasSavedScoreRef.current = false;
     setIsPlaying(true);
@@ -1161,14 +1172,21 @@ export function HorseRallyRunner() {
                       value={playerName}
                       onChange={(e) => {
                         setPlayerName(e.target.value);
-                        try {
-                          localStorage.setItem('kinna_runner_player_name', e.target.value);
-                        } catch {}
+                        if (e.target.value.trim()) setNameError(null);
                       }}
                       placeholder="Enter your name..."
                       maxLength={25}
-                      className="w-full bg-black/90 border border-amber-500/40 rounded-xl px-3 py-1.5 text-yellow-300 font-mono-custom text-xs outline-none focus:border-amber-400 text-center"
+                      className={`w-full bg-black/90 border rounded-xl px-3 py-1.5 text-yellow-300 font-mono-custom text-xs outline-none text-center transition-all ${
+                        nameError
+                          ? 'border-red-500 shadow-[0_0_15px_rgba(255,0,0,0.6)] animate-pulse text-red-300'
+                          : 'border-amber-500/40 focus:border-amber-400'
+                      }`}
                     />
+                    {nameError && (
+                      <div className="text-red-400 font-mono-custom font-bold text-[10px] text-center mt-1 animate-bounce">
+                        {nameError}
+                      </div>
+                    )}
                   </div>
 
                   <p className="font-mono-custom text-[11px] text-yellow-100/80 mb-2">

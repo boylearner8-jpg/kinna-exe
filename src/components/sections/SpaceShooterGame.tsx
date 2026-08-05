@@ -11,6 +11,10 @@ import {
   type SpaceShooterScore,
 } from '../../lib/db';
 import {
+  pauseGlobalBackgroundMusic,
+  resumeGlobalBackgroundMusic,
+} from '../../hooks/useBackgroundMusic';
+import {
   FiPlay,
   FiRefreshCw,
   FiAward,
@@ -50,6 +54,9 @@ interface Enemy {
   color: string;
   points: number;
   isBoss?: boolean;
+  isMainBoss?: boolean;
+  lastLaserShot?: number;
+  laserPattern?: number;
 }
 
 interface Particle {
@@ -66,7 +73,7 @@ interface Particle {
 interface PowerUp {
   x: number;
   y: number;
-  type: 'shield' | 'triple' | 'quad' | 'bomb' | 'heal' | 'slow' | 'multi' | 'cake';
+  type: 'shield' | 'triple' | 'quad' | 'bomb' | 'heal' | 'slow' | 'multi';
   icon: string;
   vy: number;
 }
@@ -110,14 +117,9 @@ export function SpaceShooterGame() {
     playClick();
   };
 
-  // Player Name
-  const [playerName, setPlayerName] = useState(() => {
-    try {
-      return localStorage.getItem('kinna_space_player_name') || 'Space Pilot';
-    } catch {
-      return 'Space Pilot';
-    }
-  });
+  // Player Name State — default empty, required to play!
+  const [playerName, setPlayerName] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
 
   // Game state
   const [isPlaying, setIsPlaying] = useState(false);
@@ -140,29 +142,17 @@ export function SpaceShooterGame() {
   const [slowMotionTimer, setSlowMotionTimer] = useState(0);
   const [scoreMultiplierTimer, setScoreMultiplierTimer] = useState(0);
   const [bossWarningText, setBossWarningText] = useState<string | null>(null);
+  const [activeMainBoss, setActiveMainBoss] = useState<{ charName: string; hp: number; maxHp: number } | null>(null);
 
   // Leaderboard modal
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [leaderboard, setLeaderboard] = useState<SpaceShooterScore[]>([]);
   const [loadingLeaderboard, setLoadingLeaderboard] = useState(false);
 
-  // DOM & Canvas Refs
-  const gameContainerRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  // Loaded Character Image Ref for active player spaceship
+  // Pre-load all character images for smooth 60FPS canvas rendering
+  const charImageMapRef = useRef<Record<string, HTMLImageElement>>({});
   const charImageRef = useRef<HTMLImageElement | null>(null);
 
-  // Map of all pre-loaded character face cutout images for enemy obstacles
-  const charImageMapRef = useRef<{ [id: string]: HTMLImageElement }>({});
-
-  useEffect(() => {
-    const img = new Image();
-    img.src = activeCharacter.image;
-    charImageRef.current = img;
-  }, [activeCharacter]);
-
-  // Preload all playable character face cutouts for enemy obstacles
   useEffect(() => {
     PLAYABLE_CHARACTERS.forEach((char) => {
       const img = new Image();
@@ -171,15 +161,25 @@ export function SpaceShooterGame() {
     });
   }, []);
 
-  // Engine State Refs (60FPS loop without React re-renders)
-  const isPlayingRef = useRef(false);
-  const gameOverRef = useRef(false);
+  useEffect(() => {
+    charImageRef.current = charImageMapRef.current[activeCharacter.id] || null;
+  }, [activeCharacter.id]);
+
+
+
+  // Direct GPU refs — zero React state during 60FPS loop
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const gameContainerRef = useRef<HTMLDivElement>(null);
+
+  const isPlayingRef = useRef(isPlaying);
   isPlayingRef.current = isPlaying;
+  const gameOverRef = useRef(gameOver);
   gameOverRef.current = gameOver;
 
   const playerPosRef = useRef({ x: WORLD_WIDTH / 2, y: WORLD_HEIGHT - 70 });
   const playerTargetPosRef = useRef({ x: WORLD_WIDTH / 2, y: WORLD_HEIGHT - 70 });
   const bulletsRef = useRef<Bullet[]>([]);
+  const enemyBulletsRef = useRef<Bullet[]>([]);
   const enemiesRef = useRef<Enemy[]>([]);
   const particlesRef = useRef<Particle[]>([]);
   const powerUpsRef = useRef<PowerUp[]>([]);
@@ -195,6 +195,7 @@ export function SpaceShooterGame() {
   const scoreMultiplierTimerRef = useRef(0);
   const gameStartTimeRef = useRef(0);
   const lastBossTimeRef = useRef(0);
+  const lastBossDeathTimeRef = useRef(0);
 
   const selectedCharIdRef = useRef(selectedCharId);
   selectedCharIdRef.current = selectedCharId;
@@ -202,6 +203,52 @@ export function SpaceShooterGame() {
   const animFrameRef = useRef<number | null>(null);
   const lastShotTimeRef = useRef(0);
   const keysPressedRef = useRef<{ [key: string]: boolean }>({});
+
+  // Shuffle-Bag Boss Selection State
+  const bossBagRef = useRef<PlayableCharacter[]>([]);
+  const lastBossCharIdRef = useRef<string | null>(null);
+
+  // ═══ Space Shooter Custom Music Track (Pauses main website audio while playing!) ═══
+  const spaceAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    if (isPlaying && !gameOver) {
+      // 1. Pause main website background music
+      pauseGlobalBackgroundMusic();
+
+      // 2. Play Space Shooter custom audio track (/space_rock.mp3)
+      if (!spaceAudioRef.current) {
+        const audio = new Audio('/space_rock.mp3');
+        audio.loop = true;
+        audio.volume = 0.5;
+        audio.addEventListener('error', () => {
+          if (audio.src.endsWith('space_rock.mp3')) {
+            audio.src = '/kinna.mp3';
+            audio.load();
+            audio.play().catch(() => {});
+          }
+        });
+        spaceAudioRef.current = audio;
+      }
+
+      spaceAudioRef.current.currentTime = 0;
+      spaceAudioRef.current.play().catch(() => {});
+    } else {
+      // Stop Space Shooter custom audio track
+      if (spaceAudioRef.current) {
+        spaceAudioRef.current.pause();
+      }
+      // Resume main website background music
+      resumeGlobalBackgroundMusic();
+    }
+
+    return () => {
+      if (spaceAudioRef.current) {
+        spaceAudioRef.current.pause();
+      }
+      resumeGlobalBackgroundMusic();
+    };
+  }, [isPlaying, gameOver]);
 
   // Initialize starfield
   useEffect(() => {
@@ -317,16 +364,43 @@ export function SpaceShooterGame() {
     }
   };
 
-  // Helper to spawn a Main Giant Boss (1.7x Giant Size!)
+  // Helper to select next boss using a Shuffle-Bag System (No back-to-back repeats, full cycle coverage)
+  const getNextBossChar = (): PlayableCharacter => {
+    const pool = PLAYABLE_CHARACTERS.filter((c) => c.id !== selectedCharIdRef.current);
+    if (pool.length === 0) return PLAYABLE_CHARACTERS[0];
+
+    // If current shuffle bag is empty, fill and reshuffle with Fisher-Yates algorithm
+    if (bossBagRef.current.length === 0) {
+      const newBag = [...pool];
+      for (let i = newBag.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [newBag[i], newBag[j]] = [newBag[j], newBag[i]];
+      }
+      // Ensure the first boss in the new cycle is NOT identical to the last boss of the previous cycle!
+      if (newBag.length > 1 && newBag[0].id === lastBossCharIdRef.current) {
+        const swapIndex = Math.floor(Math.random() * (newBag.length - 1)) + 1;
+        [newBag[0], newBag[swapIndex]] = [newBag[swapIndex], newBag[0]];
+      }
+      bossBagRef.current = newBag;
+    }
+
+    const chosenBoss = bossBagRef.current.shift()!;
+    lastBossCharIdRef.current = chosenBoss.id;
+    return chosenBoss;
+  };
+
+  // Helper to spawn a Main Giant Boss (Shuffle-bag selection, 10x Sub-Boss HP, 20s Spawner, Immune to Bomb!)
   const spawnBossEnemy = () => {
     const w = waveRef.current;
-    lastBossTimeRef.current = Date.now();
+    const now = Date.now();
+    lastBossTimeRef.current = now;
+    lastBossDeathTimeRef.current = now;
 
-    // Filter out player's currently chosen character
-    const availableBossChars = PLAYABLE_CHARACTERS.filter((c) => c.id !== selectedCharIdRef.current);
-    const bossChar = availableBossChars.length > 0
-      ? availableBossChars[Math.floor(Math.random() * availableBossChars.length)]
-      : PLAYABLE_CHARACTERS[0];
+    // Shuffle-bag random selection ensuring no back-to-back repeats and full cycle variety
+    const bossChar = getNextBossChar();
+
+    const subBossHp = 15 + w * 6;
+    const mainBossHp = subBossHp * 10; // 10x Sub-Boss HP!
 
     enemiesRef.current.push({
       id: `boss-${Date.now()}-${Math.random()}`,
@@ -337,29 +411,30 @@ export function SpaceShooterGame() {
       vx: (Math.random() - 0.5) * 2.5,
       vy: 0.7,
       radius: 110, // 1.7x Giant Boss cutout face!
-      hp: 50 + w * 15,
-      maxHp: 50 + w * 15,
+      hp: mainBossHp,
+      maxHp: mainBossHp,
       color: '#ff0055',
-      points: 1500,
+      points: 2500,
       isBoss: true,
+      isMainBoss: true,
     });
 
-    setBossWarningText(`⚠️ WARNING: GIANT BOSS ${bossChar.name.toUpperCase()} APPROACHING!`);
+    setBossWarningText(`${bossChar.name.toUpperCase()} BOSS COMING!`);
     setTimeout(() => setBossWarningText(null), 3500);
   };
 
   // Enemy Spawner helper based on wave (1.7x Sizes + Frequent Sub-Bosses!)
-  const spawnEnemyBatch = () => {
+  const spawnEnemyBatch = (overrideCount?: number) => {
     const w = waveRef.current;
-    const count = 2 + Math.floor(w * 0.8);
+    const count = overrideCount ?? (2 + Math.floor(w * 0.8));
     const colors = ['#ff0055', '#ff9900', '#ffea00', '#a855f7', '#00e5ff'];
 
     // Filter out player's currently chosen character so you never fight yourself!
     const availableEnemyChars = PLAYABLE_CHARACTERS.filter((c) => c.id !== selectedCharIdRef.current);
     const pool = availableEnemyChars.length > 0 ? availableEnemyChars : PLAYABLE_CHARACTERS;
 
-    // Spawn Sub-Boss on every batch spawn (40% chance or if count > 2)
-    const hasSubBoss = Math.random() < 0.4 || count >= 4;
+    // Spawn Sub-Boss on normal batch spawns (disabled during boss fight minion spawns)
+    const hasSubBoss = !overrideCount && (Math.random() < 0.4 || count >= 4);
 
     for (let i = 0; i < count; i++) {
       const char = pool[Math.floor(Math.random() * pool.length)];
@@ -403,6 +478,15 @@ export function SpaceShooterGame() {
 
   // Start Game
   const startGame = () => {
+    if (!playerName.trim()) {
+      setNameError('⚠️ PLEASE ENTER PILOT NAME TO START!');
+      return;
+    }
+    setNameError(null);
+    try {
+      localStorage.setItem('kinna_space_player_name', playerName.trim());
+    } catch {}
+
     setScore(0);
     scoreRef.current = 0;
     setWave(1);
@@ -422,11 +506,15 @@ export function SpaceShooterGame() {
 
     gameStartTimeRef.current = Date.now();
     lastBossTimeRef.current = Date.now();
+    lastBossDeathTimeRef.current = Date.now();
+    bossBagRef.current = [];
+    lastBossCharIdRef.current = null;
 
     playerPosRef.current = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT - 80 };
     playerTargetPosRef.current = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT - 80 };
 
     bulletsRef.current = [];
+    enemyBulletsRef.current = [];
     enemiesRef.current = [];
     particlesRef.current = [];
     powerUpsRef.current = [];
@@ -566,6 +654,50 @@ export function SpaceShooterGame() {
       }
       ctx.shadowBlur = 0;
 
+      // 4b. UPDATE & RENDER ENEMY / BOSS EYE LASERS
+      for (let i = enemyBulletsRef.current.length - 1; i >= 0; i--) {
+        const eb = enemyBulletsRef.current[i];
+        const speedMult = slowMotionTimerRef.current > 0 ? 0.5 : 1.0;
+        eb.x += eb.vx * speedMult;
+        eb.y += eb.vy * speedMult;
+
+        // Draw glowing red eye laser beam
+        ctx.save();
+        ctx.shadowColor = '#ff0040';
+        ctx.shadowBlur = 15;
+        ctx.fillStyle = '#ff0040';
+        ctx.beginPath();
+        ctx.arc(eb.x, eb.y, eb.radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Inner white laser core
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(eb.x, eb.y, eb.radius * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // Collision with player ship
+        const hitDist = Math.hypot(px - eb.x, py - eb.y);
+        if (hitDist < 45) {
+          createExplosion(eb.x, eb.y, '#ff0040', 8);
+          enemyBulletsRef.current.splice(i, 1);
+
+          if (hasShieldRef.current) {
+            hasShieldRef.current = false;
+            setHasShield(false);
+          } else {
+            playerHpRef.current = Math.max(0, playerHpRef.current - 15);
+            setPlayerHp(playerHpRef.current);
+            if (playerHpRef.current <= 0) {
+              endGame();
+            }
+          }
+        } else if (eb.y > WORLD_HEIGHT + 30 || eb.x < -30 || eb.x > WORLD_WIDTH + 30) {
+          enemyBulletsRef.current.splice(i, 1);
+        }
+      }
+
       // 5. UPDATE & DRAW POWERUPS
       for (let i = powerUpsRef.current.length - 1; i >= 0; i--) {
         const p = powerUpsRef.current[i];
@@ -598,25 +730,21 @@ export function SpaceShooterGame() {
           } else if (p.type === 'multi') {
             scoreMultiplierTimerRef.current = 600; // 10s 2x multiplier
             setScoreMultiplierTimer(600);
-          } else if (p.type === 'cake') {
-            hasShieldRef.current = true;
-            setHasShield(true);
-            quadShotTimerRef.current = 500;
-            setQuadShotTimer(500);
-            scoreMultiplierTimerRef.current = 600;
-            setScoreMultiplierTimer(600);
-            scoreRef.current += 1000;
-            setScore(scoreRef.current);
-            setBossWarningText('🎂 HAPPY BIRTHDAY ARYAN (GHODA)! 🎉 (+1000 PTS & INVINCIBILITY)');
-            setTimeout(() => setBossWarningText(null), 4000);
           } else if (p.type === 'bomb') {
-            // Nuke screen
+            // Screen Bomb Nuke — destroys regular enemies & sub-bosses, but Main Bosses are 100% immune/invincible!
+            const remainingEnemies: Enemy[] = [];
             enemiesRef.current.forEach((e) => {
-              createExplosion(e.x, e.y, e.color, 15);
-              const pts = scoreMultiplierTimerRef.current > 0 ? e.points * 2 : e.points;
-              scoreRef.current += pts;
+              if (e.isMainBoss) {
+                // Main Boss is immune to Bomb!
+                createExplosion(e.x, e.y, '#ffea00', 10);
+                remainingEnemies.push(e);
+              } else {
+                createExplosion(e.x, e.y, e.color, 15);
+                const pts = scoreMultiplierTimerRef.current > 0 ? e.points * 2 : e.points;
+                scoreRef.current += pts;
+              }
             });
-            enemiesRef.current = [];
+            enemiesRef.current = remainingEnemies;
             setScore(scoreRef.current);
           }
           powerUpsRef.current.splice(i, 1);
@@ -625,22 +753,38 @@ export function SpaceShooterGame() {
         }
       }
 
-      // 6. SPAWN & UPDATE ENEMIES
+      // 6. SPAWN & UPDATE ENEMIES — Regular enemies spawn much less frequently during Main Boss fights!
+      const isBossActive = enemiesRef.current.some((e) => e.isMainBoss);
+      const spawnInterval = isBossActive ? 320 : Math.max(90, 180 - waveRef.current * 10);
+      const maxEnemies = isBossActive ? 3 : 8 + waveRef.current * 2;
+
       spawnTimer++;
-      if (spawnTimer % Math.max(90, 180 - waveRef.current * 10) === 0) {
-        if (enemiesRef.current.length < 8 + waveRef.current * 2) {
-          spawnEnemyBatch();
+      if (spawnTimer % spawnInterval === 0) {
+        if (enemiesRef.current.length < maxEnemies) {
+          spawnEnemyBatch(isBossActive ? 1 : undefined);
         }
       }
 
-      // Boss Spawner Check: After first 30 seconds, spawn giant boss every 18s or when no boss present
+      // Main Boss Spawner Check: First Main Boss at 20s, then exactly 20s after previous boss death
       const nowTime = Date.now();
       const elapsedSinceStart = nowTime - gameStartTimeRef.current;
-      const elapsedSinceLastBoss = nowTime - lastBossTimeRef.current;
-      const hasActiveBoss = enemiesRef.current.some((e) => e.isBoss);
+      const elapsedSinceLastBossDeath = nowTime - lastBossDeathTimeRef.current;
+      const hasActiveMainBoss = enemiesRef.current.some((e) => e.isMainBoss);
 
-      if (elapsedSinceStart > 30000 && elapsedSinceLastBoss > 18000 && !hasActiveBoss) {
+      if (elapsedSinceStart >= 20000 && elapsedSinceLastBossDeath >= 20000 && !hasActiveMainBoss) {
         spawnBossEnemy();
+      }
+
+      // Track active Main Boss for HUD Health Bar
+      const currentMainBoss = enemiesRef.current.find((e) => e.isMainBoss);
+      if (currentMainBoss) {
+        setActiveMainBoss({
+          charName: currentMainBoss.charName,
+          hp: currentMainBoss.hp,
+          maxHp: currentMainBoss.maxHp,
+        });
+      } else {
+        setActiveMainBoss(null);
       }
 
       for (let i = enemiesRef.current.length - 1; i >= 0; i--) {
@@ -652,6 +796,55 @@ export function SpaceShooterGame() {
         // Wall bounce
         if (e.x - e.radius < 0 || e.x + e.radius > WORLD_WIDTH) e.vx *= -1;
 
+        // Main Boss bounds check & Eye Laser Attack logic — Fires twin red eye lasers!
+        if (e.isMainBoss) {
+          const maxY = WORLD_HEIGHT * 0.42;
+          if (e.y > maxY) {
+            e.y = maxY;
+            e.vy = -Math.abs(e.vy); // Bounce back up into top half!
+          }
+          if (e.y < 80) {
+            e.vy = Math.abs(e.vy);
+          }
+
+          // Fire eye lasers with alternating attack patterns (Straight, Spread, Targeted)
+          const now = Date.now();
+          if (!e.lastLaserShot || now - e.lastLaserShot > 1200) {
+            e.lastLaserShot = now;
+            if (e.laserPattern === undefined) e.laserPattern = 0;
+            e.laserPattern = (e.laserPattern + 1) % 3;
+
+            const eyeLeftX = e.x - 32;
+            const eyeRightX = e.x + 32;
+            const eyeY = e.y + 25;
+
+            if (e.laserPattern === 0) {
+              // Pattern 0: Straight Down Lasers
+              enemyBulletsRef.current.push(
+                { x: eyeLeftX, y: eyeY, vx: 0, vy: 8.5, radius: 5, color: '#ff0040' },
+                { x: eyeRightX, y: eyeY, vx: 0, vy: 8.5, radius: 5, color: '#ff0040' }
+              );
+            } else if (e.laserPattern === 1) {
+              // Pattern 1: Spread / Angled Lasers
+              enemyBulletsRef.current.push(
+                { x: eyeLeftX, y: eyeY, vx: -2.2, vy: 7.5, radius: 5, color: '#ff0040' },
+                { x: eyeRightX, y: eyeY, vx: 2.2, vy: 7.5, radius: 5, color: '#ff0040' },
+                { x: e.x, y: eyeY, vx: 0, vy: 8.0, radius: 5, color: '#ff0040' }
+              );
+            } else {
+              // Pattern 2: Targeted Beam straight towards Player Ship
+              const dx = px - e.x;
+              const dy = py - eyeY;
+              const dist = Math.hypot(dx, dy) || 1;
+              const speed = 8.2;
+              enemyBulletsRef.current.push(
+                { x: eyeLeftX, y: eyeY, vx: (dx / dist) * speed, vy: (dy / dist) * speed, radius: 5, color: '#ff0040' },
+                { x: eyeRightX, y: eyeY, vx: (dx / dist) * speed, vy: (dy / dist) * speed, radius: 5, color: '#ff0040' }
+              );
+            }
+          }
+        }
+
         // Render Enemy (Direct Character Cutout Image Only — No Circular Boundary)
         const charImg = charImageMapRef.current[e.charId];
         if (charImg && charImg.complete) {
@@ -659,8 +852,8 @@ export function SpaceShooterGame() {
           ctx.translate(e.x, e.y);
 
           // Soft drop-shadow glow behind cutout (no circle boundary)
-          ctx.shadowColor = e.isBoss ? '#ff0055' : e.color;
-          ctx.shadowBlur = e.isBoss ? 20 : 10;
+          ctx.shadowColor = e.isMainBoss ? '#ff0055' : e.isBoss ? '#ff9900' : e.color;
+          ctx.shadowBlur = e.isMainBoss ? 25 : e.isBoss ? 16 : 10;
 
           // Draw direct character cutout image
           const faceSize = e.radius * 2.2;
@@ -673,12 +866,22 @@ export function SpaceShooterGame() {
           ctx.fillText('👾', e.x, e.y);
         }
 
-        // Enemy Health Bar for Bosses
-        if (e.isBoss) {
-          ctx.fillStyle = 'rgba(255,0,0,0.5)';
-          ctx.fillRect(e.x - 40, e.y - e.radius - 16, 80, 8);
+        // Draw Main Boss Health Bar floating directly above his head
+        if (e.isMainBoss) {
+          const barW = 150;
+          const barH = 10;
+          const bx = e.x - barW / 2;
+          const by = e.y - e.radius - 22;
+
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+          ctx.fillRect(bx - 2, by - 2, barW + 4, barH + 4);
+          ctx.strokeStyle = '#ff0055';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(bx - 2, by - 2, barW + 4, barH + 4);
+
+          const hpPct = Math.max(0, e.hp / e.maxHp);
           ctx.fillStyle = '#ff0055';
-          ctx.fillRect(e.x - 40, e.y - e.radius - 16, 80 * (e.hp / e.maxHp), 8);
+          ctx.fillRect(bx, by, barW * hpPct, barH);
         }
 
         // Bullet Collisions
@@ -697,15 +900,20 @@ export function SpaceShooterGame() {
               scoreRef.current += pts;
               setScore(scoreRef.current);
 
-              // Powerup drop logic — Includes Aryan Birthday Cake 🎂 Special!
+              if (e.isMainBoss) {
+                lastBossDeathTimeRef.current = Date.now();
+              }
+
+              // Powerup drop logic — Bomb & Shield drop much less frequently!
               const powerTypes: PowerUp['type'][] = [
-                'cake', 'cake', 'cake', // Birthday Cake Special!
-                'triple', 'triple',
-                'quad', 'quad',
-                'shield', 'bomb', 'heal', 'slow', 'multi'
+                'triple', 'triple', 'triple', 'triple',
+                'quad', 'quad', 'quad', 'quad',
+                'multi', 'multi',
+                'slow', 'heal',
+                'shield', // Less frequent
+                'bomb',   // Less frequent
               ];
               const powerIcons: Record<PowerUp['type'], string> = {
-                cake: '🎂',
                 shield: '🛡️',
                 triple: '⚡',
                 quad: '🚀',
@@ -873,9 +1081,9 @@ export function SpaceShooterGame() {
             ref={gameContainerRef}
             className="relative w-full bg-black overflow-hidden h-[540px] sm:h-[720px] cursor-crosshair touch-none"
           >
-            {/* Boss Warning Banner Overlay */}
+            {/* Boss Warning Text Overlay — Centered Blinking Red Text with no background */}
             {bossWarningText && (
-              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 bg-red-600/90 text-white font-mono-custom text-xs sm:text-sm font-black px-4 py-2 rounded-xl border-2 border-yellow-400 shadow-[0_0_25px_#ff0055] animate-bounce text-center tracking-wider max-w-md">
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 text-red-600 font-mono-custom font-black text-xl sm:text-3xl text-center tracking-widest uppercase animate-pulse pointer-events-none drop-shadow-[0_0_25px_rgba(255,0,0,0.95)] whitespace-nowrap">
                 {bossWarningText}
               </div>
             )}
@@ -890,21 +1098,42 @@ export function SpaceShooterGame() {
             {/* Floating HUD Overlay during active gameplay — Floating badges never shake top window! */}
             {isPlaying && !gameOver && (
               <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between pointer-events-none font-mono-custom text-xs">
-                {/* Left: Hull Shield Bar */}
-                <div className="w-36 sm:w-44 bg-black/80 border border-cyan-500/40 rounded-xl p-1.5 backdrop-blur-md shadow-[0_0_15px_rgba(0,229,255,0.2)]">
-                  <div className="flex justify-between text-[10px] text-cyan-300 font-bold mb-1">
-                    <span>HULL SHIELD</span>
-                    <span>{playerHp}%</span>
+                {/* Left: Hull Shield Bar & Main Boss Health Bar */}
+                <div className="flex flex-col gap-1.5">
+                  {/* Player Hull Shield */}
+                  <div className="w-36 sm:w-44 bg-black/80 border border-cyan-500/40 rounded-xl p-1.5 backdrop-blur-md shadow-[0_0_15px_rgba(0,229,255,0.2)]">
+                    <div className="flex justify-between text-[10px] text-cyan-300 font-bold mb-1">
+                      <span>HULL SHIELD</span>
+                      <span>{playerHp}%</span>
+                    </div>
+                    <div className="w-full h-2 bg-gray-900 rounded-full overflow-hidden border border-cyan-500/30">
+                      <div
+                        className="h-full transition-all duration-300"
+                        style={{
+                          width: `${playerHp}%`,
+                          background: playerHp > 50 ? '#00ff41' : playerHp > 25 ? '#ffea00' : '#ff0040',
+                        }}
+                      />
+                    </div>
                   </div>
-                  <div className="w-full h-2 bg-gray-900 rounded-full overflow-hidden border border-cyan-500/30">
-                    <div
-                      className="h-full transition-all duration-300"
-                      style={{
-                        width: `${playerHp}%`,
-                        background: playerHp > 50 ? '#00ff41' : playerHp > 25 ? '#ffea00' : '#ff0040',
-                      }}
-                    />
-                  </div>
+
+                  {/* Main Boss Health Bar (Only Main Boss, not sub-bosses!) */}
+                  {activeMainBoss && (
+                    <div className="w-36 sm:w-44 bg-black/90 border border-red-500/50 rounded-xl p-1.5 backdrop-blur-md shadow-[0_0_15px_rgba(255,0,85,0.4)] animate-pulse">
+                      <div className="flex justify-between text-[10px] text-red-400 font-bold mb-1 truncate">
+                        <span className="truncate">BOSS: {activeMainBoss.charName}</span>
+                        <span>{Math.max(0, Math.ceil((activeMainBoss.hp / activeMainBoss.maxHp) * 100))}%</span>
+                      </div>
+                      <div className="w-full h-2 bg-gray-900 rounded-full overflow-hidden border border-red-500/40">
+                        <div
+                          className="h-full bg-gradient-to-r from-red-600 to-pink-500 transition-all duration-200"
+                          style={{
+                            width: `${Math.max(0, (activeMainBoss.hp / activeMainBoss.maxHp) * 100)}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Right: Floating Active Powerup Badges */}
@@ -980,14 +1209,21 @@ export function SpaceShooterGame() {
                       value={playerName}
                       onChange={(e) => {
                         setPlayerName(e.target.value);
-                        try {
-                          localStorage.setItem('kinna_space_player_name', e.target.value);
-                        } catch {}
+                        if (e.target.value.trim()) setNameError(null);
                       }}
                       placeholder="Enter Pilot Name..."
                       maxLength={25}
-                      className="w-full bg-black/90 border border-cyan-500/40 rounded-xl px-3 py-1.5 text-cyan-300 font-mono-custom text-xs outline-none focus:border-cyan-400 text-center"
+                      className={`w-full bg-black/90 border rounded-xl px-3 py-1.5 text-cyan-300 font-mono-custom text-xs outline-none text-center transition-all ${
+                        nameError
+                          ? 'border-red-500 shadow-[0_0_15px_rgba(255,0,0,0.6)] animate-pulse text-red-300'
+                          : 'border-cyan-500/40 focus:border-cyan-400'
+                      }`}
                     />
+                    {nameError && (
+                      <div className="text-red-400 font-mono-custom font-bold text-[10px] text-center mt-1 animate-bounce">
+                        {nameError}
+                      </div>
+                    )}
                   </div>
 
                   <p className="font-mono-custom text-[11px] text-cyan-200/80 mb-3">

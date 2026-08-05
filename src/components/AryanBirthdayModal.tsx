@@ -185,9 +185,9 @@ export function AryanBirthdayModal({ isOpen, onClose }: AryanBirthdayModalProps)
                     </div>
 
                     <div className="flex items-start gap-1.5 text-amber-200">
-                      <span className="text-xs">🎂</span>
+                      <span className="text-xs">🚀</span>
                       <div>
-                        <strong className="text-yellow-300">Birthday Cake Powerups:</strong> Collect 🎂 cakes in Space Shooter for +1,000 pts, Quad Lasers &amp; Shield!
+                        <strong className="text-yellow-300">Boosted Triple &amp; Quad Lasers:</strong> 3x &amp; 4x plasma powerups spawn much more frequently in Space Shooter!
                       </div>
                     </div>
 

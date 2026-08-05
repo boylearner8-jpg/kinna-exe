@@ -25,6 +25,20 @@ function getGlobalAudio(): HTMLAudioElement {
   return globalAudio;
 }
 
+export function pauseGlobalBackgroundMusic(): boolean {
+  if (globalAudio && !globalAudio.paused) {
+    globalAudio.pause();
+    return true;
+  }
+  return false;
+}
+
+export function resumeGlobalBackgroundMusic() {
+  if (globalAudio && globalAudio.paused && !globalAudio.muted) {
+    globalAudio.play().catch(() => {});
+  }
+}
+
 export function useBackgroundMusic(introFinished: boolean) {
   // Read initial mute state from localStorage
   const [muted, setMuted] = useState<boolean>(() => {

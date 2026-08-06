@@ -25,6 +25,13 @@ function getGlobalAudio(): HTMLAudioElement {
   return globalAudio;
 }
 
+export function playGlobalBackgroundMusic() {
+  const audio = getGlobalAudio();
+  if (!audio.muted) {
+    audio.play().catch(() => {});
+  }
+}
+
 export function pauseGlobalBackgroundMusic(): boolean {
   if (globalAudio && !globalAudio.paused) {
     globalAudio.pause();

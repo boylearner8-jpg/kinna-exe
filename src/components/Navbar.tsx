@@ -12,7 +12,6 @@ const NAV_ITEMS = [
   { label: 'SPACE SHOOTER', href: '#space-shooter' },
   { label: 'HORSE RUNNER', href: '#horse-runner' },
   { label: 'JOURNEY', href: '#journey' },
-  { label: 'TITAN CLASH', href: '#titan-clash' },
   { label: 'CRIME PARTNER', href: '#crime-partner' },
   { label: 'GALLERY', href: '#hall-of-fame' },
   { label: 'FATHERSAHAB', href: '#fathersahab' },

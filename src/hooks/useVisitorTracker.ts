@@ -21,10 +21,9 @@ export function useVisitorTracker() {
   useEffect(() => {
     const sessionId = sessionIdRef.current;
 
-    // Record visit in Supabase
-    buildVisitorLog(sessionId).then((log) => {
-      insertVisitorLog(log);
-    });
+    // Record visit instantly in Supabase within 1ms
+    const initialLog = buildVisitorLog(sessionId);
+    insertVisitorLog(initialLog);
 
     // Track user activity
     const markActive = () => {
@@ -56,7 +55,13 @@ export function useVisitorTracker() {
     // Periodically persist to Supabase
     const persister = setInterval(() => {
       const total = Math.round((Date.now() - sessionStartRef.current) / 1000);
+      let currentName = 'Anonymous';
+      try {
+        currentName = localStorage.getItem('kinna_user_global_name') || localStorage.getItem('kinna_space_player_name') || 'Anonymous';
+      } catch {}
+
       updateVisitorLog(sessionId, {
+        user_name: currentName,
         total_duration_seconds: total,
         active_seconds: Math.round(activeSecondsRef.current),
         idle_seconds: Math.round(idleSecondsRef.current),

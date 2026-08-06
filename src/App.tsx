@@ -1,16 +1,16 @@
 import { useState } from 'react';
-import { useBackgroundMusic } from './hooks/useBackgroundMusic';
+import { useBackgroundMusic, playGlobalBackgroundMusic } from './hooks/useBackgroundMusic';
 import { useVisitorTracker } from './hooks/useVisitorTracker';
 import { CursorGlow, FloatingParticles, ScanLines } from './components/effects/CursorAndParticles';
 import { LoadingScreen } from './components/LoadingScreen';
+import { SiteNameEntryModal } from './components/SiteNameEntryModal';
 import { KinnaNotificationModal } from './components/KinnaNotificationModal';
 import { VisitorRecordsModal } from './components/VisitorRecordsModal';
 import { CommentToastContainer } from './components/CommentToastContainer';
-import { AryanBirthdayModal, FloatingBirthdayButton } from './components/AryanBirthdayModal';
+import { FloatingCommentsModal } from './components/FloatingCommentsModal';
 import { Navbar } from './components/Navbar';
 import { Hero } from './components/Hero';
 import { KinnaJourney } from './components/sections/KinnaJourney';
-import { TitanClashGame } from './components/sections/TitanClashGame';
 import { HorseRallyRunner } from './components/sections/HorseRallyRunner';
 import { SpaceShooterGame } from './components/sections/SpaceShooterGame';
 import { PublicStats } from './components/sections/PublicStats';
@@ -19,12 +19,13 @@ import { HallOfFame } from './components/sections/HallOfFame';
 import { Kinnapedia } from './components/sections/Kinnapedia';
 import { Fathersahab } from './components/sections/Fathersahab';
 
+import { updateCurrentVisitorName } from './lib/tracker';
 import { Footer } from './components/Footer';
 
 export default function App() {
   const [loaded, setLoaded] = useState(false);
+  const [showNameModal, setShowNameModal] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
-  const [showBirthdayModal, setShowBirthdayModal] = useState(false);
   const [showRecordsModal, setShowRecordsModal] = useState(false);
   const [userContinued, setUserContinued] = useState(false);
 
@@ -36,16 +37,31 @@ export default function App() {
 
   const handleLoadingComplete = () => {
     setLoaded(true);
+    playGlobalBackgroundMusic();
+    let savedName = '';
+    try {
+      savedName = localStorage.getItem('kinna_user_global_name') || '';
+    } catch {}
+
+    if (!savedName) {
+      setShowNameModal(true);
+    } else {
+      setShowNotificationModal(true);
+    }
+  };
+
+  const handleSiteNameComplete = (enteredName: string) => {
+    if (enteredName) {
+      updateCurrentVisitorName(enteredName);
+    }
+    playGlobalBackgroundMusic();
+    setShowNameModal(false);
     setShowNotificationModal(true);
   };
 
   const handleNotificationClose = () => {
+    playGlobalBackgroundMusic();
     setShowNotificationModal(false);
-    setShowBirthdayModal(true); // Open Aryan Birthday Announcement modal right after Kinna message!
-  };
-
-  const handleBirthdayModalClose = () => {
-    setShowBirthdayModal(false);
     setUserContinued(true);
   };
 
@@ -61,20 +77,17 @@ export default function App() {
       {/* Intro Loading Screen */}
       {!loaded && <LoadingScreen onComplete={handleLoadingComplete} />}
 
+      {/* Mandatory Site Entrance Name Prompt */}
+      <SiteNameEntryModal
+        isOpen={showNameModal}
+        onComplete={handleSiteNameComplete}
+      />
+
       {/* Kinna Discord/WhatsApp Style Notification Popup */}
       <KinnaNotificationModal
         isOpen={showNotificationModal}
         onClose={handleNotificationClose}
       />
-
-      {/* Special Aryan (Ghoda) Birthday Announcement & Wish Modal */}
-      <AryanBirthdayModal
-        isOpen={showBirthdayModal}
-        onClose={handleBirthdayModalClose}
-      />
-
-      {/* Floating Birthday Quick Button to view/send wishes anytime */}
-      <FloatingBirthdayButton onClick={() => setShowBirthdayModal(true)} />
 
       {/* Secret Visitor Records Modal (5-click on KINNA.EXE) */}
       <VisitorRecordsModal
@@ -84,6 +97,9 @@ export default function App() {
 
       {/* Realtime & Random Comment Toast Notifications (Starts only after clicking Continue) */}
       <CommentToastContainer isLoaded={userContinued} />
+
+      {/* Floating Left Corner Quick Comments Icon & Interactive Guestbook Drawer */}
+      <FloatingCommentsModal />
 
       {/* Global Visual Effects */}
       <CursorGlow />
@@ -103,7 +119,6 @@ export default function App() {
         <SpaceShooterGame />
         <HorseRallyRunner />
         <KinnaJourney />
-        <TitanClashGame />
         <CrimePartner />
         <HallOfFame />
         <Fathersahab />

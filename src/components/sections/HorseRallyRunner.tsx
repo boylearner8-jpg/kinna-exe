@@ -211,9 +211,23 @@ export function HorseRallyRunner() {
   // Prevent double saving score flag
   const hasSavedScoreRef = useRef(false);
 
-  // Player Name State — default empty, required to play!
-  const [playerName, setPlayerName] = useState('');
+  // Player Name State — ALWAYS pre-filled with global user name by default
+  const getGlobalRunnerName = () => {
+    try {
+      return localStorage.getItem('kinna_user_global_name') || localStorage.getItem('kinna_runner_player_name') || '';
+    } catch {
+      return '';
+    }
+  };
+
+  const [playerName, setPlayerName] = useState(getGlobalRunnerName);
   const [nameError, setNameError] = useState<string | null>(null);
+
+  // Sync with global user name on mount
+  useEffect(() => {
+    const saved = getGlobalRunnerName();
+    if (saved) setPlayerName(saved);
+  }, []);
 
   // Game state — only triggers re-render on game phase changes, NOT during gameplay
   const [isPlaying, setIsPlaying] = useState(false);

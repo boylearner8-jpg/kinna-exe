@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useScrollReveal } from '../../hooks/useKinna';
-import { fetchVisitorLogs } from '../../lib/tracker';
+import { fetchVisitorLogs, fetchTotalVisitorCount } from '../../lib/tracker';
 import type { VisitorLog } from '../../lib/tracker';
 import {
   FiActivity,
@@ -26,14 +26,19 @@ interface TimePeriod {
 export function PublicStats() {
   const { ref, visible } = useScrollReveal(0.1);
   const [logs, setLogs] = useState<VisitorLog[]>([]);
+  const [totalCount, setTotalCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const loadData = async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     try {
-      const data = await fetchVisitorLogs();
+      const [data, exactCount] = await Promise.all([
+        fetchVisitorLogs(),
+        fetchTotalVisitorCount(),
+      ]);
       setLogs(data);
+      setTotalCount(exactCount > 0 ? exactCount : data.length);
     } catch (e) {
       console.error('Failed to load visitor stats:', e);
     } finally {
@@ -52,7 +57,7 @@ export function PublicStats() {
   // ══════════════════════════════════════════════
   // STATS CALCULATIONS
   // ══════════════════════════════════════════════
-  const totalVisitors = logs.length > 0 ? logs.length : 1; // Fallback to 1 for initial visit
+  const totalVisitors = totalCount > 0 ? totalCount : (logs.length > 0 ? logs.length : 1);
 
   // Calculate Time of Day breakdown
   // Morning: 6 AM - 12 PM

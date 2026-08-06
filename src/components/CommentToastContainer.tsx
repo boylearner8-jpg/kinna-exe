@@ -113,14 +113,9 @@ export function CommentToastContainer({ isLoaded = true }: CommentToastContainer
   };
 
   const handleToastClick = () => {
-    const commentsEl = document.getElementById('journey-comments');
-    if (commentsEl) {
-      commentsEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    } else {
-      const journeyEl = document.getElementById('journey');
-      if (journeyEl) {
-        journeyEl.scrollIntoView({ behavior: 'smooth' });
-      }
+    const floatingBtn = document.querySelector<HTMLButtonElement>('.fixed.bottom-6.left-6 button');
+    if (floatingBtn) {
+      floatingBtn.click();
     }
   };
 
@@ -152,7 +147,7 @@ export function CommentToastContainer({ isLoaded = true }: CommentToastContainer
                 </span>
                 <span className="font-mono-custom text-[10px] font-bold text-yellow-400 tracking-widest uppercase flex items-center gap-1">
                   <FiRadio className="w-3 h-3 text-yellow-400 animate-pulse" />
-                  JOURNEY OPINION
+                  PUBLIC COMMENT
                 </span>
               </div>
 
@@ -176,7 +171,7 @@ export function CommentToastContainer({ isLoaded = true }: CommentToastContainer
                   <div className="font-display font-black text-xs text-yellow-300 tracking-wide truncate">
                     <span className="text-yellow-400">{toast.name}</span>
                   </div>
-                  <span className="font-mono-custom text-[9px] text-yellow-500/50">CLICK TO VIEW</span>
+                  <span className="font-mono-custom text-[9px] text-yellow-500/50">CLICK TO OPEN</span>
                 </div>
 
                 {toast.commentSnippet ? (
@@ -185,7 +180,7 @@ export function CommentToastContainer({ isLoaded = true }: CommentToastContainer
                   </p>
                 ) : (
                   <div className="font-mono-custom text-xs text-yellow-100/90 font-medium">
-                    just left a comment on Kinna's Journey! 💬
+                    just left a new comment! 💬
                   </div>
                 )}
               </div>

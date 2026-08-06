@@ -117,9 +117,23 @@ export function SpaceShooterGame() {
     playClick();
   };
 
-  // Player Name State — default empty, required to play!
-  const [playerName, setPlayerName] = useState('');
+  // Player Name State — ALWAYS pre-filled with global user name by default
+  const getGlobalSpaceName = () => {
+    try {
+      return localStorage.getItem('kinna_user_global_name') || localStorage.getItem('kinna_space_player_name') || '';
+    } catch {
+      return '';
+    }
+  };
+
+  const [playerName, setPlayerName] = useState(getGlobalSpaceName);
   const [nameError, setNameError] = useState<string | null>(null);
+
+  // Sync with global user name on mount
+  useEffect(() => {
+    const saved = getGlobalSpaceName();
+    if (saved) setPlayerName(saved);
+  }, []);
 
   // Game state
   const [isPlaying, setIsPlaying] = useState(false);
